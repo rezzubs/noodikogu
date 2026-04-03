@@ -116,7 +116,7 @@ Title terms, person terms, and tag terms can be combined with boolean logic (sco
 - Quoted strings (e.g. `"#literal"`) bypass special character interpretation and search as title text
 
 ### Tag boolean syntax
-- `#tag_name:(value1 & value2)` — score must have the tag with both values
+- `#tag_name:(value1 value2)` — score must have the tag with both values
 - `#tag_name:(value1 | value2)` — score must have the tag with either value
 - `#tag_name:!value` — score must have the tag but NOT with this value (other values are fine)
 - `!#tag_name:value` — exclude scores that have this specific tag+value pair (other values for the tag are still fine)

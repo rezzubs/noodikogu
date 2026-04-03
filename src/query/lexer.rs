@@ -28,8 +28,6 @@ pub enum TokenKind {
     Or,
     /// `!`
     Not,
-    /// `&`
-    And,
     /// `.`
     Dot,
     /// Any sequence of whitespace characters.
@@ -105,7 +103,6 @@ impl<'a> Iterator for Lexer<'a> {
             ')' => TokenKind::GroupEnd,
             '|' => TokenKind::Or,
             '!' => TokenKind::Not,
-            '&' => TokenKind::And,
             '.' => TokenKind::Dot,
             '"' => {
                 let content_start = self.position;
@@ -160,7 +157,7 @@ impl<'a> Iterator for Lexer<'a> {
 
 /// Returns true if `c` terminates a [`TokenKind::Word`].
 fn is_special(c: char) -> bool {
-    matches!(c, '#' | '@' | ':' | '(' | ')' | '|' | '!' | '&' | '.' | '"') || c.is_whitespace()
+    matches!(c, '#' | '@' | ':' | '(' | ')' | '|' | '!' | '.' | '"') || c.is_whitespace()
 }
 
 #[cfg(test)]
@@ -233,7 +230,7 @@ mod tests {
     #[test]
     fn tag_value_and_group() {
         assert_eq!(
-            kinds("#key:(C & D)"),
+            kinds("#key:(C D)"),
             [
                 TokenKind::TagStart,
                 TokenKind::Word,
@@ -241,7 +238,6 @@ mod tests {
                 TokenKind::GroupStart,
                 TokenKind::Word,
                 TokenKind::Whitespace,
-                TokenKind::And,
                 TokenKind::Whitespace,
                 TokenKind::Word,
                 TokenKind::GroupEnd,

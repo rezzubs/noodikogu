@@ -99,7 +99,7 @@ The top-level AST node encodes the search mode. Only one mode is active per quer
 
 - **Score mode** (default): results are scores. All boolean syntax applies.
 - **People mode** (`@@`): results are people. `@@Vettik` finds people with a name component starting with "Vettik". No other search terms are allowed.
-- **Tag mode** (`##`): results are tags. `##difficulty` finds tags with names starting with "difficulty". No other search terms are allowed.
+- **Tag mode** (`##`): results are tags. `##difficulty` finds tags with names starting with "difficulty". No other search terms are allowed. Values cannot be specified here (`:value`).
 - `@@` or `##` alone (no prefix term) returns all people or all tags respectively.
 - People and tag modes work the same on both the web interface and CLI.
 

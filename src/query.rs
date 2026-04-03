@@ -1,4 +1,5 @@
 mod lexer;
+mod parser;
 
 use std::ops::Deref;
 use std::str::FromStr;
@@ -9,7 +10,7 @@ pub enum Query {
     /// Default score mode — search scores with boolean logic.
     Score(ScoreQuery),
     /// Tag mode (`##`) — search for tags by name prefix.
-    Tag(Option<Tag>),
+    Tag { name: Option<TagItem> },
     /// People mode (`@@`) — search for people by name component prefixes.
     Person(Option<Person>),
 }

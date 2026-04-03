@@ -11,3 +11,4 @@
 - Do not inlcude private struct fields in doc comments
 - Always derive common traits like Debug, Clone, Copy, PartialEq, Eq, Hash when appropriate.
 - impl blocks should come right after the type (no other types in the middle). Trait impl blocks should follow regular impl blocks.
+- Always ask questions about stuff you're not sure about. Try not to assume intent.

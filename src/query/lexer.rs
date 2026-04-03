@@ -7,6 +7,12 @@ pub struct Token {
     pub span: Range<usize>,
 }
 
+impl AsRef<Token> for Token {
+    fn as_ref(&self) -> &Token {
+        self
+    }
+}
+
 /// The kind of a [`Token`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenKind {

@@ -1,3 +1,5 @@
+mod lexer;
+
 use std::ops::Deref;
 use std::str::FromStr;
 

@@ -1,3 +1,22 @@
+//! Query types for the score catalogue search language.
+//!
+//! # AST invariants
+//!
+//! The boolean query types ([`ScoreQuery`], [`AndQuery`], [`OrQuery`],
+//! [`NotQuery`]) enforce a normalized form so that consumers (e.g. the SQL
+//! generator) never have to handle redundant structure:
+//!
+//! - **Flat sequences.** AND and OR nodes hold a `Vec` of their operands rather
+//!   than a binary pair, so `A & B & C` is `And([A, B, C])` instead of `And(A,
+//!   And(B, C))`. As a consequence, an AND node cannot appear inside another AND
+//!   node, and likewise for OR — there is no such variant in [`AndQuery`] or
+//!   [`OrQuery`]. The parser is responsible for flattening consecutive
+//!   same-operator terms.
+//!
+//! - **No double negation.** [`NotQuery`] has no `Not` variant, making `!(!x)`
+//!   unrepresentable. The parser simplifies double negations away before
+//!   constructing the AST.
+
 mod lexer;
 mod parser;
 

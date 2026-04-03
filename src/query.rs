@@ -23,7 +23,7 @@ pub enum ScoreQuery {
     Atom(SearchAtom),
     And(Vec<AndQuery>),
     Or(Vec<OrQuery>),
-    Not(Vec<NotQuery>),
+    Not(NotQuery),
 }
 
 /// A term that can appear inside an AND expression.
@@ -31,7 +31,7 @@ pub enum ScoreQuery {
 pub enum AndQuery {
     Atom(SearchAtom),
     Or(Vec<OrQuery>),
-    Not(Vec<NotQuery>),
+    Not(NotQuery),
 }
 
 /// A term that can appear inside an OR expression.
@@ -39,7 +39,7 @@ pub enum AndQuery {
 pub enum OrQuery {
     Atom(SearchAtom),
     And(Vec<AndQuery>),
-    Not(Vec<NotQuery>),
+    Not(NotQuery),
 }
 
 /// A term that can be negated with `!`.

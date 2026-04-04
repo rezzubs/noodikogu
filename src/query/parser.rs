@@ -383,6 +383,12 @@ impl<'a> Parser<'a> {
         Ok(SearchAtom::Title(full_title))
     }
 
+    fn parse_or(&self, first_query: ScoreQuery, group_depth: usize) -> ScoreQuery {
+        _ = first_query;
+        _ = group_depth;
+        todo!();
+    }
+
     fn parse_sequence(
         &mut self,
         first_query: ScoreQuery,
@@ -390,38 +396,33 @@ impl<'a> Parser<'a> {
     ) -> Result<ScoreQuery> {
         _ = first_query;
         _ = group_depth;
-        todo!()
+
+        todo!();
     }
 
-    /// Default parser when a more specific context doesn't exist.
-    fn parse_any(&mut self, group_depth: usize) -> Result<ScoreQuery> {
-        self.skip_whitespace();
-        let expected_first = ExpectedValue::Title
+    fn parse_single(&mut self, group_depth: usize) -> Result<ScoreQuery> {
+        let expected = ExpectedValue::Title
             .or(ExpectedValue::TagExpression)
             .or(ExpectedValue::Group);
 
         let Some(first_token) = self.next() else {
-            return Err(Error::unexpected_eof(expected_first));
+            return Err(Error::unexpected_eof(expected));
         };
 
-        build_unexpected!(unexpected1, self, first_token, expected_first);
+        build_unexpected!(unexpected, self, first_token, expected);
 
-        let first_query = match first_token.kind {
-            TokenKind::TagPrefix => self.parse_tag(group_depth)?,
-            TokenKind::NamePrefix => {
-                let atom = self.parse_name(group_depth)?;
-                ScoreQuery::Atom(atom)
-            }
+        match first_token.kind {
+            TokenKind::TagPrefix => self.parse_tag(group_depth),
+            TokenKind::NamePrefix => self.parse_name(group_depth).map(ScoreQuery::Atom),
             TokenKind::GroupStart => {
                 let Some(group) = self.parse_group(group_depth)? else {
                     return self.parse_any(group_depth);
                 };
-                group
+                Ok(group)
             }
-            TokenKind::Word | TokenKind::QuotedText => {
-                let atom = self.parse_title(first_token, group_depth)?;
-                ScoreQuery::Atom(atom)
-            }
+            TokenKind::Word | TokenKind::QuotedText => self
+                .parse_title(first_token, group_depth)
+                .map(ScoreQuery::Atom),
 
             TokenKind::Whitespace => unreachable!("we skipped whitespace"),
 
@@ -433,44 +434,51 @@ impl<'a> Parser<'a> {
             | TokenKind::TagValueSeparator
             | TokenKind::Or
             | TokenKind::Not
-            | TokenKind::NameSeparator => unexpected1!(),
+            | TokenKind::NameSeparator => unexpected!(),
 
-            TokenKind::TagModePrefix => unexpected1!(Help::TagModeAtStart),
-            TokenKind::NameModePrefix => unexpected1!(Help::NameModeAtStart),
-        };
+            TokenKind::TagModePrefix => unexpected!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected!(Help::NameModeAtStart),
+        }
+    }
 
-        let Some(second_token) = self.peek() else {
+    /// Default parser when a more specific context doesn't exist.
+    fn parse_any(&mut self, group_depth: usize) -> Result<ScoreQuery> {
+        self.skip_whitespace();
+
+        let first_query = self.parse_single(group_depth)?;
+
+        let Some(token) = self.peek() else {
             return Ok(first_query);
         };
 
-        let expected_second = ExpectedValue::WhiteSpace;
+        let expected = ExpectedValue::WhiteSpace;
         let expected_second = if group_depth > 0 {
-            expected_second.or(DisplayToken::GroupEnd)
+            expected.or(DisplayToken::GroupEnd)
         } else {
-            expected_second.into_expected()
+            expected.into_expected()
         };
 
-        build_unexpected!(unexpected2, self, second_token, expected_second);
+        build_unexpected!(unexpected, self, second_token, expected_second);
 
-        match second_token.kind {
+        match token.kind {
             TokenKind::Whitespace => self.parse_sequence(first_query, group_depth),
 
             TokenKind::GroupEnd if group_depth > 0 => Ok(first_query),
 
-            TokenKind::TagPrefix => unexpected2!(Help::SpaceBeforeTag),
-            TokenKind::GroupStart => unexpected2!(Help::SpaceBeforeGroup),
-            TokenKind::NamePrefix => unexpected2!(Help::SpaceBeforeName),
-            TokenKind::QuotedText => unexpected2!(Help::SpaceBeforeQuote),
-            TokenKind::Or => unexpected2!(Help::SpaceBeforeOr),
-            TokenKind::Not => unexpected2!(Help::SpaceBeforeNot),
+            TokenKind::TagPrefix => unexpected!(Help::SpaceBeforeTag),
+            TokenKind::GroupStart => unexpected!(Help::SpaceBeforeGroup),
+            TokenKind::NamePrefix => unexpected!(Help::SpaceBeforeName),
+            TokenKind::QuotedText => unexpected!(Help::SpaceBeforeQuote),
+            TokenKind::Or => unexpected!(Help::SpaceBeforeOr),
+            TokenKind::Not => unexpected!(Help::SpaceBeforeNot),
 
             TokenKind::GroupEnd
             | TokenKind::NameSeparator
             | TokenKind::Word
-            | TokenKind::TagValueSeparator => unexpected2!(),
+            | TokenKind::TagValueSeparator => unexpected!(),
 
-            TokenKind::TagModePrefix => unexpected2!(Help::TagModeAtStart),
-            TokenKind::NameModePrefix => unexpected2!(Help::NameModeAtStart),
+            TokenKind::TagModePrefix => unexpected!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected!(Help::NameModeAtStart),
         }
     }
 }

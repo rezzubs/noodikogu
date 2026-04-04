@@ -1,9 +1,21 @@
+use std::fmt::Display;
+
 use crate::query::{
-    lexer::{Lexer, Token, TokenKind},
     Person, PersonError, PersonName, PersonNameError, Query, ScoreQuery, TagItemError,
+    lexer::{DisplayToken, Lexer, Token, TokenKind},
 };
 
 type Result<T> = std::result::Result<T, ParseError>;
+
+trait AddHelp<T> {
+    fn with_help(self, help: impl Into<String>) -> Result<T>;
+}
+
+impl<T> AddHelp<T> for Result<T> {
+    fn with_help(self, help: impl Into<String>) -> Result<T> {
+        self.map_err(|e| e.with_help(help))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{kind}")]
@@ -21,26 +33,36 @@ impl ParseError {
     }
 }
 
-trait AddHelp<T> {
-    fn with_help(self, help: impl Into<String>) -> Result<T>;
-}
-
-impl<T> AddHelp<T> for Result<T> {
-    fn with_help(self, help: impl Into<String>) -> Result<T> {
-        self.map_err(|e| e.with_help(help))
+impl From<ParseErrorKind> for ParseError {
+    fn from(value: ParseErrorKind) -> Self {
+        ParseError {
+            help: None,
+            kind: value,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseErrorKind {
-    UnexpectedEof { expected: String },
-    UnexpectedToken { expected: String, found: String },
-    InvalidTagName { invalid: char, name: String },
-    InvalidPersonName { invalid: char, name: String },
+    UnexpectedEof {
+        expected: Expected,
+    },
+    UnexpectedToken {
+        expected: Expected,
+        found: DisplayToken,
+    },
+    InvalidTagName {
+        invalid: char,
+        name: String,
+    },
+    InvalidPersonName {
+        invalid: char,
+        name: String,
+    },
     Empty,
 }
 
-impl std::fmt::Display for ParseErrorKind {
+impl Display for ParseErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParseErrorKind::UnexpectedEof { expected } => {
@@ -66,21 +88,137 @@ impl std::fmt::Display for ParseErrorKind {
     }
 }
 
-impl From<ParseErrorKind> for ParseError {
-    fn from(value: ParseErrorKind) -> Self {
-        ParseError {
-            help: None,
-            kind: value,
+trait IntoExpected {
+    fn into_expected(self) -> Expected;
+}
+
+impl<T> IntoExpected for T
+where
+    T: IntoExpectedValue,
+{
+    fn into_expected(self) -> Expected {
+        Expected::One(self.into_expected_value())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expected {
+    /// One of multiple expected values.
+    OneOf { options: Vec<ExpectedValue> },
+    /// Exactly one expected value.
+    One(ExpectedValue),
+}
+
+impl Expected {
+    /// Chain another expected value
+    fn or(self, other: impl IntoExpectedValue) -> Self {
+        let options = match self {
+            Expected::OneOf { mut options } => {
+                let other_value = other.into_expected_value();
+                options.push(other_value);
+                options
+            }
+            Expected::One(value) => {
+                let other_value = other.into_expected_value();
+                Vec::from([value, other_value])
+            }
+        };
+
+        Self::OneOf { options }
+    }
+}
+
+impl IntoExpected for Expected {
+    fn into_expected(self) -> Expected {
+        self
+    }
+}
+
+impl Display for Expected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expected::OneOf { options } => {
+                write!(
+                    f,
+                    "one of: {}",
+                    options
+                        .iter()
+                        .map(|option| option.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            Expected::One(option) => {
+                write!(f, "one: {:?}", option)
+            }
         }
     }
 }
 
-struct Completion {}
+trait IntoExpectedValue {
+    fn into_expected_value(self) -> ExpectedValue;
+
+    fn or(self, other: ExpectedValue) -> Expected
+    where
+        Self: Sized,
+    {
+        self.into_expected_value().or(other)
+    }
+}
+
+impl IntoExpectedValue for DisplayToken {
+    fn into_expected_value(self) -> ExpectedValue {
+        ExpectedValue::Token(self)
+    }
+}
+
+/// A single
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpectedValue {
+    /// A specific token.
+    Token(DisplayToken),
+    /// End of input.
+    Eof,
+    /// A tag name.
+    TagName,
+    /// A name of a person
+    Name,
+    /// Any whitespace
+    WhiteSpace,
+}
+
+impl ExpectedValue {
+    /// Chain another expected value
+    pub fn or(self, other: impl Into<ExpectedValue>) -> Expected {
+        Expected::OneOf {
+            options: Vec::from([self.into(), other.into()]),
+        }
+    }
+}
+
+impl IntoExpectedValue for ExpectedValue {
+    fn into_expected_value(self) -> ExpectedValue {
+        self
+    }
+}
+
+impl Display for ExpectedValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExpectedValue::Token(token) => {
+                write!(f, "{}", token)
+            }
+            ExpectedValue::Eof => write!(f, "end of input"),
+            ExpectedValue::TagName => write!(f, "a tag name"),
+            ExpectedValue::Name => write!(f, "a name"),
+            ExpectedValue::WhiteSpace => write!(f, "whitespace"),
+        }
+    }
+}
 
 struct Parser<'a> {
     lexer: Lexer<'a>,
     cursor_pos: usize,
-    completion: Option<Completion>,
     peeked: Option<Token>,
 }
 
@@ -94,7 +232,6 @@ impl<'a> Parser<'a> {
             lexer,
             cursor_pos,
             peeked: None,
-            completion: None,
         }
     }
 
@@ -117,12 +254,14 @@ impl<'a> Parser<'a> {
         self.peeked.take().or_else(|| self.lexer.next());
     }
 
-    fn expect(&mut self, kind: TokenKind, expected: &str) -> Result<()> {
+    fn input(&self) -> &str {
+        self.lexer.input()
+    }
+
+    fn expect(&mut self, kind: TokenKind, expected: impl IntoExpected) -> Result<()> {
+        let expected = expected.into_expected();
         let Some(token) = self.next() else {
-            return Err(ParseErrorKind::UnexpectedEof {
-                expected: expected.into(),
-            }
-            .into());
+            return Err(ParseErrorKind::UnexpectedEof { expected }.into());
         };
         if token.kind != kind {
             self.unexpected(token, expected)?;
@@ -130,13 +269,13 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn expect_eof(&mut self, expected: &str) -> Result<()> {
+    fn expect_eof(&mut self) -> Result<()> {
         let Some(token) = self.next() else {
             return Ok(());
         };
         Err(ParseErrorKind::UnexpectedToken {
-            expected: expected.into(),
-            found: format!("`{}`", &self.lexer.input()[token.span.clone()]),
+            expected: ExpectedValue::Eof.into_expected(),
+            found: token.display(self.input()),
         }
         .into())
     }
@@ -151,25 +290,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn token_str(&self, token: &Token) -> &str {
-        &self.lexer.input()[token.span.clone()]
-    }
-
-    fn token_str_with_ticks(&self, token: &Token) -> String {
-        format!("`{}`", self.token_str(token))
-    }
-
     /// Helper for returning an unexpected token error. Always returns `Err`. Pretends to return `T` for `Ok`.
-    fn unexpected_t<T>(&self, token: impl AsRef<Token>, expected: &str) -> Result<T> {
+    fn unexpected_t<T>(&self, token: impl AsRef<Token>, expected: impl IntoExpected) -> Result<T> {
         Err(ParseErrorKind::UnexpectedToken {
-            expected: expected.into(),
-            found: self.token_str_with_ticks(token.as_ref()),
+            expected: expected.into_expected(),
+            found: token.as_ref().display(self.input()),
         }
         .into())
     }
 
     /// Helper for returning an unexpected token error. Always returns `Err`. Pretends to return `()` for `Ok`.
-    fn unexpected(&self, token: impl AsRef<Token>, expected: &str) -> Result<()> {
+    fn unexpected(&self, token: impl AsRef<Token>, expected: impl IntoExpected) -> Result<()> {
         self.unexpected_t(token, expected)
     }
 
@@ -179,18 +310,19 @@ impl<'a> Parser<'a> {
             return Ok(Query::Tag { name: None });
         };
 
-        let first = match first.kind {
-            TokenKind::Word => first,
+        let tag_name_raw = match first.kind {
+            TokenKind::Word => first.content(self.input()),
             TokenKind::Whitespace => {
-                self.expect_eof("nothing")
+                self.expect_eof()
                     .with_help("tag mode (`##`) can't have any content after it")?;
 
                 return Ok(Query::Tag { name: None });
             }
-            _ => return self.unexpected_t(first, "tag name or nothing"),
+            _ => {
+                return self.unexpected_t(first, ExpectedValue::TagName.or(ExpectedValue::Eof));
+            }
         };
 
-        let tag_name_raw = self.token_str(&first);
         let tag_name = tag_name_raw.parse().map_err(|err| match err {
             TagItemError::Empty => unreachable!("The lexer should not return empty strings"),
             TagItemError::InvalidChar(invalid) => ParseErrorKind::InvalidTagName {
@@ -201,7 +333,7 @@ impl<'a> Parser<'a> {
 
         self.skip_whitespace();
 
-        self.expect_eof("nothing")
+        self.expect_eof()
             .with_help("tag mode (`##`) can't have any content after it")?;
 
         Ok(Query::Tag {
@@ -217,7 +349,7 @@ impl<'a> Parser<'a> {
 
         let first_name = match first.kind {
             TokenKind::Word => {
-                let first_name_raw = self.token_str(&first);
+                let first_name_raw = first.content(self.input());
                 PersonName::parse(first_name_raw).map_err(|err| match err {
                     PersonNameError::Empty => {
                         unreachable!("The lexer should not return empty words")
@@ -229,32 +361,37 @@ impl<'a> Parser<'a> {
                 })?
             }
             TokenKind::Whitespace => {
-                self.expect_eof("end of input")
+                self.expect_eof()
                     .with_help("`@@` mode should not have any terms after the name part")?;
 
                 return Ok(Query::Person(None));
             }
-            _ => self.unexpected_t(first, "name or nothing")?,
+            _ => self.unexpected_t(first, ExpectedValue::Name.or(ExpectedValue::Eof))?,
         };
 
         let mut names = Vec::from([first_name]);
         while let Some(separator) = self.next() {
             match separator.kind {
-                TokenKind::Dot => {}
+                TokenKind::NameSeparator => {}
                 TokenKind::Whitespace => break,
                 TokenKind::Word => {
                     unreachable!("The lexer should not return two words in sequence")
                 }
-                _ => self.unexpected(separator, "`.` or whitespace")?,
+                _ => self.unexpected(
+                    separator,
+                    DisplayToken::NameSeparator.or(ExpectedValue::WhiteSpace),
+                )?,
             }
 
             // Dot without a following word can be ignored
             let Some(next_word) = self.next() else { break };
 
             let name = match next_word.kind {
-                TokenKind::Word => self.token_str(&next_word),
+                TokenKind::Word => next_word.content(self.input()),
                 TokenKind::Whitespace => break,
-                _ => self.unexpected_t(next_word, "word or whitespace")?,
+                _ => {
+                    self.unexpected_t(next_word, ExpectedValue::Name.or(ExpectedValue::WhiteSpace))?
+                }
             };
 
             let name = PersonName::parse(name).map_err(|err| match err {
@@ -270,7 +407,7 @@ impl<'a> Parser<'a> {
 
         self.skip_whitespace();
 
-        self.expect_eof("end of input")
+        self.expect_eof()
             .with_help("`@@` mode should not have any terms after the name part")?;
 
         let person = match Person::new(names) {
@@ -288,19 +425,19 @@ impl<'a> Parser<'a> {
         let first = self.next().ok_or(ParseErrorKind::Empty)?;
 
         match first.kind {
-            TokenKind::TagStart => todo!(),
-            TokenKind::TagMode => self.parse_tag_mode(),
-            TokenKind::TagValueStart => todo!(),
-            TokenKind::NameStart => todo!(),
-            TokenKind::NameMode => self.parse_name_mode(),
+            TokenKind::TagPrefix => todo!(),
+            TokenKind::TagModePrefix => self.parse_tag_mode(),
+            TokenKind::TagValueSeparator => todo!(),
+            TokenKind::NamePrefix => todo!(),
+            TokenKind::NameModePrefix => self.parse_name_mode(),
             TokenKind::GroupStart => todo!(),
             TokenKind::GroupEnd => todo!(),
             TokenKind::Or => todo!(),
             TokenKind::Not => todo!(),
-            TokenKind::Dot => todo!(),
+            TokenKind::NameSeparator => todo!(),
             TokenKind::Whitespace => unreachable!("whitespace was already skipped"),
             TokenKind::Word => todo!(),
-            TokenKind::RawText => todo!(),
+            TokenKind::QuotedText => todo!(),
         }
     }
 

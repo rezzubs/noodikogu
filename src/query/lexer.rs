@@ -1,10 +1,41 @@
-use std::{iter::Peekable, ops::Range, str::Chars};
+use std::{fmt::Display, iter::Peekable, ops::Range, str::Chars};
 
 /// A single lexical token produced by the [`Lexer`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Range<usize>,
+}
+
+impl Token {
+    pub fn display(&self, input: &str) -> DisplayToken {
+        match self.kind {
+            TokenKind::TagPrefix => DisplayToken::TagPrefix,
+            TokenKind::TagModePrefix => DisplayToken::TagModePrefix,
+            TokenKind::TagValueSeparator => DisplayToken::TagValueSeparator,
+            TokenKind::NamePrefix => DisplayToken::NamePrefix,
+            TokenKind::NameModePrefix => DisplayToken::NameModePrefix,
+            TokenKind::GroupStart => DisplayToken::GroupStart,
+            TokenKind::GroupEnd => DisplayToken::GroupEnd,
+            TokenKind::Or => DisplayToken::Or,
+            TokenKind::Not => DisplayToken::Not,
+            TokenKind::NameSeparator => DisplayToken::NameSeparator,
+            TokenKind::Whitespace => DisplayToken::Whitespace {
+                content: self.content(input).into(),
+            },
+            TokenKind::Word => DisplayToken::Word {
+                content: self.content(input).into(),
+            },
+            TokenKind::QuotedText => DisplayToken::QuotedText {
+                content: self.content(input).into(),
+            },
+        }
+    }
+
+    /// Get the
+    pub fn content<'a>(&self, input: &'a str) -> &'a str {
+        &input[self.span.clone()]
+    }
 }
 
 impl AsRef<Token> for Token {
@@ -17,15 +48,15 @@ impl AsRef<Token> for Token {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenKind {
     /// `#`
-    TagStart,
+    TagPrefix,
     /// `##`
-    TagMode,
+    TagModePrefix,
     /// `:`
-    TagValueStart,
+    TagValueSeparator,
     /// `@`
-    NameStart,
+    NamePrefix,
     /// `@@`
-    NameMode,
+    NameModePrefix,
     /// `(`
     GroupStart,
     /// `)`
@@ -35,7 +66,7 @@ pub enum TokenKind {
     /// `!`
     Not,
     /// `.`
-    Dot,
+    NameSeparator,
     /// Any sequence of whitespace characters.
     Whitespace,
     /// Text for a [`super::TagItem`], [`super::PersonName`] or title.
@@ -44,7 +75,61 @@ pub enum TokenKind {
     ///
     /// The span covers only the content between the quotes, not the quotes themselves.
     /// An unterminated string is treated as a complete `RawText`. Empty strings are ignored.
-    RawText,
+    QuotedText,
+}
+
+/// A displayable representation of a [`Token`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayToken {
+    /// `#`
+    TagPrefix,
+    /// `##`
+    TagModePrefix,
+    /// `:`
+    TagValueSeparator,
+    /// `@`
+    NamePrefix,
+    /// `@@`
+    NameModePrefix,
+    /// `(`
+    GroupStart,
+    /// `)`
+    GroupEnd,
+    /// `|`
+    Or,
+    /// `!`
+    Not,
+    /// `.`
+    NameSeparator,
+    /// Any sequence of whitespace characters.
+    Whitespace { content: String },
+    /// Text for a [`super::TagItem`], [`super::PersonName`] or title.
+    Word { content: String },
+    /// `"` delimited text. Can contain any unicode characters.
+    QuotedText {
+        /// The raw text content (without quotes).
+        content: String,
+    },
+}
+
+impl Display for DisplayToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DisplayToken::TagPrefix => write!(f, "tag prefix `#`"),
+            DisplayToken::TagModePrefix => write!(f, "tag mode prefix `##`"),
+            DisplayToken::TagValueSeparator => write!(f, "tag value separator `:`"),
+            DisplayToken::NamePrefix => write!(f, "name prefix `@`"),
+            DisplayToken::NameModePrefix => write!(f, "name mode prefix `@@`"),
+            DisplayToken::GroupStart => write!(f, "group start `(`"),
+            DisplayToken::GroupEnd => write!(f, "group end `)`"),
+            DisplayToken::Or => write!(f, "OR `|`"),
+            DisplayToken::Not => write!(f, "NOT `!`"),
+            DisplayToken::NameSeparator => write!(f, "name separator `.`"),
+            DisplayToken::Whitespace { content } => write!(f, "whitespace `{}`", content),
+            DisplayToken::Word { content } => write!(f, "word `{}`", content),
+            DisplayToken::QuotedText { content } => write!(f, "quoted text `\"{}'\"`", content),
+        }
+    }
 }
 
 /// An iterator over the [`Token`]s of a query string.
@@ -91,25 +176,25 @@ impl<'a> Iterator for Lexer<'a> {
             '#' => {
                 if self.peek() == Some('#') {
                     self.advance();
-                    TokenKind::TagMode
+                    TokenKind::TagModePrefix
                 } else {
-                    TokenKind::TagStart
+                    TokenKind::TagPrefix
                 }
             }
             '@' => {
                 if self.peek() == Some('@') {
                     self.advance();
-                    TokenKind::NameMode
+                    TokenKind::NameModePrefix
                 } else {
-                    TokenKind::NameStart
+                    TokenKind::NamePrefix
                 }
             }
-            ':' => TokenKind::TagValueStart,
+            ':' => TokenKind::TagValueSeparator,
             '(' => TokenKind::GroupStart,
             ')' => TokenKind::GroupEnd,
             '|' => TokenKind::Or,
             '!' => TokenKind::Not,
-            '.' => TokenKind::Dot,
+            '.' => TokenKind::NameSeparator,
             '"' => {
                 let content_start = self.position;
                 loop {
@@ -121,7 +206,7 @@ impl<'a> Iterator for Lexer<'a> {
                                 return self.next();
                             }
                             return Some(Token {
-                                kind: TokenKind::RawText,
+                                kind: TokenKind::QuotedText,
                                 span: content_start..before,
                             });
                         }
@@ -133,7 +218,7 @@ impl<'a> Iterator for Lexer<'a> {
                             }
                             // Unterminated string — treat content as RawText.
                             return Some(Token {
-                                kind: TokenKind::RawText,
+                                kind: TokenKind::QuotedText,
                                 span: content_start..self.position,
                             });
                         }
@@ -203,7 +288,7 @@ mod tests {
 
     #[test]
     fn tag_no_value() {
-        assert_eq!(kinds("#folk"), [TokenKind::TagStart, TokenKind::Word]);
+        assert_eq!(kinds("#folk"), [TokenKind::TagPrefix, TokenKind::Word]);
     }
 
     #[test]
@@ -211,9 +296,9 @@ mod tests {
         assert_eq!(
             kinds("#key:C"),
             [
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word,
-                TokenKind::TagValueStart,
+                TokenKind::TagValueSeparator,
                 TokenKind::Word
             ]
         );
@@ -224,9 +309,9 @@ mod tests {
         assert_eq!(
             kinds("#key:!C"),
             [
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word,
-                TokenKind::TagValueStart,
+                TokenKind::TagValueSeparator,
                 TokenKind::Not,
                 TokenKind::Word
             ]
@@ -238,9 +323,9 @@ mod tests {
         assert_eq!(
             kinds("#key:(C D)"),
             [
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word,
-                TokenKind::TagValueStart,
+                TokenKind::TagValueSeparator,
                 TokenKind::GroupStart,
                 TokenKind::Word,
                 TokenKind::Whitespace,
@@ -253,17 +338,20 @@ mod tests {
 
     #[test]
     fn tag_mode() {
-        assert_eq!(kinds("##difficulty"), [TokenKind::TagMode, TokenKind::Word]);
+        assert_eq!(
+            kinds("##difficulty"),
+            [TokenKind::TagModePrefix, TokenKind::Word]
+        );
     }
 
     #[test]
     fn tag_mode_alone() {
-        assert_eq!(kinds("##"), [TokenKind::TagMode]);
+        assert_eq!(kinds("##"), [TokenKind::TagModePrefix]);
     }
 
     #[test]
     fn person() {
-        assert_eq!(kinds("@Soosalu"), [TokenKind::NameStart, TokenKind::Word]);
+        assert_eq!(kinds("@Soosalu"), [TokenKind::NamePrefix, TokenKind::Word]);
     }
 
     #[test]
@@ -271,9 +359,9 @@ mod tests {
         assert_eq!(
             kinds("@Vettik.Tuudur"),
             [
-                TokenKind::NameStart,
+                TokenKind::NamePrefix,
                 TokenKind::Word,
-                TokenKind::Dot,
+                TokenKind::NameSeparator,
                 TokenKind::Word
             ]
         );
@@ -281,12 +369,15 @@ mod tests {
 
     #[test]
     fn people_mode() {
-        assert_eq!(kinds("@@Vettik"), [TokenKind::NameMode, TokenKind::Word]);
+        assert_eq!(
+            kinds("@@Vettik"),
+            [TokenKind::NameModePrefix, TokenKind::Word]
+        );
     }
 
     #[test]
     fn people_mode_alone() {
-        assert_eq!(kinds("@@"), [TokenKind::NameMode]);
+        assert_eq!(kinds("@@"), [TokenKind::NameModePrefix]);
     }
 
     #[test]
@@ -298,7 +389,7 @@ mod tests {
                 TokenKind::Whitespace,
                 TokenKind::Or,
                 TokenKind::Whitespace,
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word
             ]
         );
@@ -308,7 +399,7 @@ mod tests {
     fn boolean_not() {
         assert_eq!(
             kinds("!#classical"),
-            [TokenKind::Not, TokenKind::TagStart, TokenKind::Word]
+            [TokenKind::Not, TokenKind::TagPrefix, TokenKind::Word]
         );
     }
 
@@ -318,12 +409,12 @@ mod tests {
             kinds("(#folk | #classical)"),
             [
                 TokenKind::GroupStart,
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word,
                 TokenKind::Whitespace,
                 TokenKind::Or,
                 TokenKind::Whitespace,
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word,
                 TokenKind::GroupEnd,
             ]
@@ -335,7 +426,7 @@ mod tests {
         let input = r##""#literal""##;
         let tokens = lex(input);
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].kind, TokenKind::RawText);
+        assert_eq!(tokens[0].kind, TokenKind::QuotedText);
         assert_eq!(&input[tokens[0].span.clone()], "#literal");
     }
 
@@ -344,7 +435,7 @@ mod tests {
         // 'Ä' and 'ä' are 2 bytes each in UTF-8.
         let input = "\"Ä käru\"";
         let tokens = lex(input);
-        assert_eq!(tokens[0].kind, TokenKind::RawText);
+        assert_eq!(tokens[0].kind, TokenKind::QuotedText);
         assert_eq!(&input[tokens[0].span.clone()], "Ä käru");
     }
 
@@ -359,7 +450,7 @@ mod tests {
         let input = "\"hello";
         let tokens = lex(input);
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].kind, TokenKind::RawText);
+        assert_eq!(tokens[0].kind, TokenKind::QuotedText);
         assert_eq!(&input[tokens[0].span.clone()], "hello");
     }
 
@@ -372,19 +463,19 @@ mod tests {
                 TokenKind::Whitespace,
                 TokenKind::Word, // Yoik
                 TokenKind::Whitespace,
-                TokenKind::NameStart,
+                TokenKind::NamePrefix,
                 TokenKind::Word, // Soosalu
                 TokenKind::Whitespace,
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word, // difficulty
-                TokenKind::TagValueStart,
+                TokenKind::TagValueSeparator,
                 TokenKind::Word, // medium
                 TokenKind::Whitespace,
                 TokenKind::Or,
                 TokenKind::Whitespace,
-                TokenKind::TagStart,
+                TokenKind::TagPrefix,
                 TokenKind::Word, // genre
-                TokenKind::TagValueStart,
+                TokenKind::TagValueSeparator,
                 TokenKind::Word, // dubstep
             ]
         );

@@ -116,10 +116,15 @@ Title terms, person terms, and tag terms can be combined with boolean logic (sco
 - Quoted strings (e.g. `"#literal"`) bypass special character interpretation and search as title text
 
 ### Tag boolean syntax
-- `#tag_name:(value1 value2)` — score must have the tag with both values
-- `#tag_name:(value1 | value2)` — score must have the tag with either value
-- `#tag_name:!value` — score must have the tag but NOT with this value (other values are fine)
-- `!#tag_name:value` — exclude scores that have this specific tag+value pair (other values for the tag are still fine)
+
+The inner value list is syntactic sugar that desugars uniformly to outer boolean operators:
+
+- `#tag_name:(value1 value2)` → `#tag_name:value1 #tag_name:value2` (must have both values)
+- `#tag_name:(value1 | value2)` → `#tag_name:value1 | #tag_name:value2` (must have either value)
+- `#tag_name:!value` → `!#tag_name:value` (must not have this tag+value pair; tag need not exist)
+- Mixed: `#tag_name:(!value1 value2)` → `!#tag_name:value1 #tag_name:value2`
+
+To require the tag to exist while excluding a specific value, use outer boolean syntax: `#tag_name !#tag_name:value`
 
 ## Ranking
 

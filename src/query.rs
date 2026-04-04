@@ -157,22 +157,16 @@ impl Deref for PersonName {
     }
 }
 
-/// A tag term within a score query (`#name` or `#name:value-expr`).
+/// A tag term within a score query (`#name` or `#name:value`).
+///
+/// `#tag:!value` in the query syntax is desugared by the parser to `!#tag:value`
+/// (outer NOT), so a [`Tag`] always represents a positive value assertion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tag {
     /// The name of the tag.
     pub name: TagItem,
-    /// The value constraint of the tag, if any.
-    pub value: Option<TagValueExpr>,
-}
-
-/// The value constraint of a tag term in a score query.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TagValueExpr {
-    /// `#tag:value` — the score must have the tag with exactly this value.
-    Single(TagItem),
-    /// `#tag:!value` — the score must have the tag but NOT with this value (other values are fine).
-    Not(TagItem),
+    /// The required value, if any.
+    pub value: Option<TagItem>,
 }
 
 /// A validated identifier for tag names or values.

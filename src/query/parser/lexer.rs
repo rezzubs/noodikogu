@@ -1,5 +1,13 @@
 use std::{fmt::Display, iter::Peekable, ops::Range, str::Chars};
 
+/// An error produced by the [`Lexer`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum LexError {
+    /// An empty quoted string `""` was encountered.
+    #[error("empty quoted strings are not allowed")]
+    EmptyQuotedString { span: Range<usize> },
+}
+
 /// A single lexical token produced by the [`Lexer`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
@@ -137,9 +145,6 @@ pub struct Lexer<'a> {
     input: &'a str,
     iter: Peekable<Chars<'a>>,
     position: usize,
-    /// Whether the most recently emitted token was [`TokenKind::Whitespace`].
-    /// Used to prevent consecutive whitespace tokens when `""` is skipped.
-    last_was_whitespace: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -149,7 +154,6 @@ impl<'a> Lexer<'a> {
             input,
             iter: input.chars().peekable(),
             position: 0,
-            last_was_whitespace: false,
         }
     }
 
@@ -170,9 +174,9 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Token;
+    type Item = Result<Token, LexError>;
 
-    fn next(&mut self) -> Option<Token> {
+    fn next(&mut self) -> Option<Result<Token, LexError>> {
         let start = self.position;
         let c = self.advance()?;
 
@@ -206,22 +210,14 @@ impl<'a> Iterator for Lexer<'a> {
                     match self.advance() {
                         Some('"') => {
                             if before == content_start {
-                                // Empty `""` — skip it. If the last emitted token was
-                                // whitespace, also consume any immediately following
-                                // whitespace to uphold the no-consecutive-whitespace
-                                // invariant.
-                                if self.last_was_whitespace {
-                                    while self.peek().is_some_and(|c| c.is_whitespace()) {
-                                        self.advance();
-                                    }
-                                }
-                                return self.next();
+                                return Some(Err(LexError::EmptyQuotedString {
+                                    span: start..self.position,
+                                }));
                             }
-                            self.last_was_whitespace = false;
-                            return Some(Token {
+                            return Some(Ok(Token {
                                 kind: TokenKind::QuotedText,
                                 span: content_start..before,
-                            });
+                            }));
                         }
                         Some(_) => {}
                         None => {
@@ -229,12 +225,11 @@ impl<'a> Iterator for Lexer<'a> {
                                 // Lone `"` at end of input — nothing to emit.
                                 return None;
                             }
-                            // Unterminated string — treat content as RawText.
-                            self.last_was_whitespace = false;
-                            return Some(Token {
+                            // Unterminated string — treat content as QuotedText.
+                            return Some(Ok(Token {
                                 kind: TokenKind::QuotedText,
                                 span: content_start..self.position,
-                            });
+                            }));
                         }
                     }
                 }
@@ -253,11 +248,10 @@ impl<'a> Iterator for Lexer<'a> {
             }
         };
 
-        self.last_was_whitespace = kind == TokenKind::Whitespace;
-        Some(Token {
+        Some(Ok(Token {
             kind,
             span: start..self.position,
-        })
+        }))
     }
 }
 
@@ -271,11 +265,11 @@ mod tests {
     use super::*;
 
     fn lex(input: &str) -> Vec<Token> {
-        Lexer::new(input).collect()
+        Lexer::new(input).map(|r| r.unwrap()).collect()
     }
 
     fn kinds(input: &str) -> Vec<TokenKind> {
-        Lexer::new(input).map(|t| t.kind).collect()
+        Lexer::new(input).map(|r| r.unwrap().kind).collect()
     }
 
     #[test]
@@ -454,17 +448,28 @@ mod tests {
     }
 
     #[test]
-    fn empty_raw_text_skipped() {
-        // `""` is ignored; tokens after it are still yielded.
-        assert_eq!(kinds("\"\" foo"), [TokenKind::Whitespace, TokenKind::Word]);
-    }
-
-    #[test]
-    fn empty_raw_text_between_whitespace_no_consecutive() {
-        // `""` surrounded by spaces must not produce two consecutive Whitespace tokens.
-        assert_eq!(kinds(" \"\" "), [TokenKind::Whitespace]);
-        assert_eq!(kinds(" \"\" foo"), [TokenKind::Whitespace, TokenKind::Word]);
-        assert_eq!(kinds("foo \"\" "), [TokenKind::Word, TokenKind::Whitespace]);
+    fn empty_quoted_string_is_error() {
+        assert_eq!(
+            Lexer::new("\"\"").next(),
+            Some(Err(LexError::EmptyQuotedString { span: 0..2 }))
+        );
+        // Errors stop collection; only the error is returned before it.
+        let results: Vec<_> = Lexer::new("foo \"\"").collect();
+        assert_eq!(
+            results[0],
+            Ok(Token {
+                kind: TokenKind::Word,
+                span: 0..3
+            })
+        );
+        assert_eq!(
+            results[1],
+            Ok(Token {
+                kind: TokenKind::Whitespace,
+                span: 3..4
+            })
+        );
+        assert_eq!(results[2], Err(LexError::EmptyQuotedString { span: 4..6 }));
     }
 
     #[test]

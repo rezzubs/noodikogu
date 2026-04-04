@@ -12,7 +12,7 @@ use lexer::{Lexer, Token, TokenKind};
 pub(crate) struct Parser<'a> {
     lexer: Lexer<'a>,
     cursor_pos: usize,
-    peeked: (Option<Token>, Option<Token>),
+    peeked: (Option<Result<Token>>, Option<Result<Token>>),
 }
 
 macro_rules! build_unexpected {
@@ -60,46 +60,57 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn peek(&mut self) -> Option<&Token> {
+    fn peek(&mut self) -> Result<Option<&Token>> {
         if self.peeked.0.is_none() {
-            self.peeked.0 = self.lexer.next();
+            self.peeked.0 = self.lexer.next().map(|r| r.map_err(Into::into));
         }
-        self.peeked.0.as_ref()
+        match &self.peeked.0 {
+            None => Ok(None),
+            Some(Ok(t)) => Ok(Some(t)),
+            Some(Err(e)) => Err(e.clone()),
+        }
     }
 
     /// Peeks at the second next token without consuming either.
-    fn peek2(&mut self) -> Option<&Token> {
+    fn peek2(&mut self) -> Result<Option<&Token>> {
         if self.peeked.0.is_none() {
-            self.peeked.0 = self.lexer.next();
+            self.peeked.0 = self.lexer.next().map(|r| r.map_err(Into::into));
         }
         if self.peeked.1.is_none() {
-            self.peeked.1 = self.lexer.next();
+            self.peeked.1 = self.lexer.next().map(|r| r.map_err(Into::into));
         }
-        self.peeked.1.as_ref()
+        match &self.peeked.1 {
+            None => Ok(None),
+            Some(Ok(t)) => Ok(Some(t)),
+            Some(Err(e)) => Err(e.clone()),
+        }
     }
 
-    fn next(&mut self) -> Option<Token> {
-        if let Some(token) = self.peeked.0.take() {
+    fn next(&mut self) -> Result<Option<Token>> {
+        let result = if let Some(result) = self.peeked.0.take() {
             self.peeked.0 = self.peeked.1.take();
-            return Some(token);
-        }
-
-        self.lexer.next()
+            result
+        } else {
+            return self.lexer.next().transpose().map_err(Into::into);
+        };
+        result.map(Some)
     }
 
     /// Call next when it's known to exist. Like after a peek.
     fn next_existing(&mut self) -> Token {
-        self.next().expect("known to exist")
+        self.next()
+            .expect("known to not be an error")
+            .expect("known to exist")
     }
 
-    /// Like next but donesn't return anything.
-    fn advance(&mut self) {
-        self.next();
+    /// Like next but doesn't return anything.
+    fn advance(&mut self) -> Result<()> {
+        self.next().map(|_| ())
     }
 
-    fn advance2(&mut self) {
-        self.next();
-        self.next();
+    fn advance2(&mut self) -> Result<()> {
+        self.next()?;
+        self.next().map(|_| ())
     }
 
     /// Return the input of the lexer.
@@ -110,7 +121,7 @@ impl<'a> Parser<'a> {
     /// Check if the next token has the given kind and error if not.
     fn expect(&mut self, kind: TokenKind, expected: impl IntoExpected) -> Result<()> {
         let expected = expected.into_expected();
-        let Some(token) = self.next() else {
+        let Some(token) = self.next()? else {
             return Err(Error::unexpected_eof(expected));
         };
         if token.kind != kind {
@@ -121,7 +132,7 @@ impl<'a> Parser<'a> {
 
     /// Check if the next token is EOF and error if not.
     fn expect_eof(&mut self) -> Result<()> {
-        let Some(token) = self.next() else {
+        let Some(token) = self.next()? else {
             return Ok(());
         };
         Err(Error::unexpected(
@@ -130,19 +141,25 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn skip_whitespace(&mut self) {
-        if self.peek().is_some_and(|t| t.kind == TokenKind::Whitespace) {
-            self.advance();
+    fn skip_whitespace(&mut self) -> Result<()> {
+        if self
+            .peek()?
+            .is_some_and(|t| t.kind == TokenKind::Whitespace)
+        {
+            self.advance()?;
             debug_assert!(
-                !self.peek().is_some_and(|t| t.kind == TokenKind::Whitespace),
+                !self
+                    .peek()?
+                    .is_some_and(|t| t.kind == TokenKind::Whitespace),
                 "consecutive whitespace tokens are impossible"
             );
         }
+        Ok(())
     }
 
     /// Parses the section following a `##`.
     fn parse_tag_mode(&mut self) -> Result<Query> {
-        let Some(first) = self.next() else {
+        let Some(first) = self.next()? else {
             return Ok(Query::Tag { name: None });
         };
 
@@ -166,7 +183,7 @@ impl<'a> Parser<'a> {
             TagItemError::InvalidChar(invalid) => Error::invalid_tag_name(invalid, tag_name_raw),
         })?;
 
-        self.skip_whitespace();
+        self.skip_whitespace()?;
 
         self.expect_eof().add_help(Help::TagModeSingleComponent)?;
 
@@ -177,7 +194,7 @@ impl<'a> Parser<'a> {
 
     /// Parses the section after `@@`.
     fn parse_name_mode(&mut self) -> Result<Query> {
-        let Some(first) = self.next() else {
+        let Some(first) = self.next()? else {
             return Ok(Query::Person(None));
         };
 
@@ -207,7 +224,7 @@ impl<'a> Parser<'a> {
         };
 
         let mut names = Vec::from([first_name]);
-        while let Some(separator) = self.next() {
+        while let Some(separator) = self.next()? {
             match separator.kind {
                 TokenKind::NameSeparator => {}
                 TokenKind::Whitespace => break,
@@ -223,7 +240,7 @@ impl<'a> Parser<'a> {
             }
 
             // Dot without a following word can be ignored
-            let Some(next_word) = self.next() else { break };
+            let Some(next_word) = self.next()? else { break };
 
             let name = match next_word.kind {
                 TokenKind::Word => next_word.content(self.input()),
@@ -244,7 +261,7 @@ impl<'a> Parser<'a> {
             names.push(name);
         }
 
-        self.skip_whitespace();
+        self.skip_whitespace()?;
 
         self.expect_eof().add_help(Help::NameModeSingleComponent)?;
 
@@ -259,16 +276,16 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_top(&mut self) -> Result<Query> {
-        self.skip_whitespace();
-        let first = self.peek().ok_or(Error::empty())?;
+        self.skip_whitespace()?;
+        let first = self.peek()?.ok_or(Error::empty())?;
 
         match first.kind {
             TokenKind::TagModePrefix => {
-                self.advance();
+                self.advance()?;
                 self.parse_tag_mode()
             }
             TokenKind::NameModePrefix => {
-                self.advance();
+                self.advance()?;
                 self.parse_name_mode()
             }
             TokenKind::Whitespace => unreachable!("whitespace was already skipped"),
@@ -302,7 +319,7 @@ impl<'a> Parser<'a> {
 
         let mut parts = Vec::from([text]);
 
-        while let Some(separator) = self.peek() {
+        while let Some(separator) = self.peek()? {
             let context = Context::EndOfTitle;
 
             let expected = ExpectedValue::WhiteSpace;
@@ -337,23 +354,23 @@ impl<'a> Parser<'a> {
                 TokenKind::NameModePrefix => unexpected!(Help::NameModeAtStart),
             }
 
-            let Some(next_token) = self.peek2() else {
+            let Some(next_token) = self.peek2()? else {
                 break;
             };
 
             let next_part = match next_token.kind {
                 TokenKind::Word => {
-                    self.advance();
+                    self.advance()?;
                     self.next_existing().content(self.input())
                 }
                 TokenKind::QuotedText => {
-                    self.advance();
+                    self.advance()?;
                     self.next_existing().content(self.input())
                 }
 
                 TokenKind::GroupEnd if group_depth > 0 => {
                     // skip only the whitespace and leave the `)` for the group parser.
-                    self.advance();
+                    self.advance()?;
                     break;
                 }
                 TokenKind::NamePrefix
@@ -362,7 +379,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::Or
                 | TokenKind::Not => {
                     // skip only the whitespace and leave the rest for other parsers.
-                    self.advance();
+                    self.advance()?;
                     break;
                 }
 
@@ -413,13 +430,13 @@ impl<'a> Parser<'a> {
         _ = first_query;
         _ = group_depth;
 
-        let Some(next) = self.peek() else {
+        let Some(next) = self.peek()? else {
             return Ok(first_query);
         };
 
         match next.kind {
             TokenKind::Or => {
-                self.advance();
+                self.advance()?;
                 self.parse_or(first_query, group_depth)
             }
             TokenKind::Whitespace => unreachable!(
@@ -445,7 +462,7 @@ impl<'a> Parser<'a> {
             .or(ExpectedValue::TagExpression)
             .or(ExpectedValue::Group);
 
-        let Some(first_token) = self.next() else {
+        let Some(first_token) = self.next()? else {
             return Err(Error::unexpected_eof(expected));
         };
 
@@ -483,11 +500,11 @@ impl<'a> Parser<'a> {
 
     /// Default parser when a more specific context doesn't exist.
     fn parse_any(&mut self, group_depth: usize) -> Result<ScoreQuery> {
-        self.skip_whitespace();
+        self.skip_whitespace()?;
 
         let first_query = self.parse_single(group_depth)?;
 
-        let Some(token) = self.next() else {
+        let Some(token) = self.next()? else {
             return Ok(first_query);
         };
 

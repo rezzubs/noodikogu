@@ -1,5 +1,6 @@
 mod expected;
 
+use super::lexer::LexError;
 use crate::query::parser::DisplayToken;
 pub use expected::{Expected, ExpectedValue, IntoExpected, IntoExpectedValue};
 use std::fmt::Display;
@@ -64,6 +65,14 @@ impl Error {
     }
 }
 
+impl From<LexError> for Error {
+    fn from(e: LexError) -> Self {
+        match e {
+            LexError::EmptyQuotedString { .. } => Error::new(ErrorKind::EmptyQuotedString),
+        }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.kind)?;
@@ -96,6 +105,8 @@ pub enum ErrorKind {
         invalid: char,
         name: String,
     },
+    /// An empty quoted string `""` appeared in the input.
+    EmptyQuotedString,
     Empty,
 }
 
@@ -108,6 +119,7 @@ impl Display for ErrorKind {
             ErrorKind::UnexpectedToken { expected, found } => {
                 write!(f, "expected: {}, found: {}", expected, found)
             }
+            ErrorKind::EmptyQuotedString => write!(f, "empty quoted strings are not allowed"),
             ErrorKind::Empty => write!(f, "The input is empty"),
             ErrorKind::InvalidTagName { invalid, name } => {
                 write!(

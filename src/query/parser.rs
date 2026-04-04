@@ -15,6 +15,38 @@ struct Parser<'a> {
     peeked: (Option<Token>, Option<Token>),
 }
 
+macro_rules! build_unexpected {
+    ($macro_name:ident, $self:ident, $token:ident, $expected:ident) => {
+        macro_rules! $macro_name {
+            () => {{
+                let $token = $self.next_existing();
+                return Err(Error::unexpected($expected, $token.display($self.input())));
+            }};
+            ($help:expr) => {{
+                let $token = $self.next_existing();
+                return Err(
+                    Error::unexpected($expected, $token.display($self.input())).add_help($help)
+                );
+            }};
+        }
+    };
+    ($macro_name:ident, $self:ident, $token:ident, $expected:ident, $context:ident) => {
+        macro_rules! $macro_name {
+            () => {{
+                let $token = $self.next_existing();
+                return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .add_context($context));
+            }};
+            ($help:expr) => {{
+                let $token = $self.next_existing();
+                return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .add_help($help)
+                    .add_context($context));
+            }};
+        }
+    };
+}
+
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str, cursor_pos: usize) -> Self {
         Self::new_with_lexer(Lexer::new(input), cursor_pos)
@@ -56,7 +88,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Call next when it's known to exist. Like after a peek.
-    fn next_unchecked(&mut self) -> Token {
+    fn next_existing(&mut self) -> Token {
         self.next().expect("known to exist")
     }
 
@@ -283,19 +315,7 @@ impl<'a> Parser<'a> {
                 expected.into_expected()
             };
 
-            macro_rules! unexpected {
-                () => {{
-                    let separator = self.next_unchecked();
-                    return Err(Error::unexpected(expected, separator.display(self.input()))
-                        .add_context(context));
-                }};
-                ($help:expr) => {{
-                    let token = self.next_unchecked();
-                    return Err(Error::unexpected(expected, token.display(self.input()))
-                        .add_help($help)
-                        .add_context(context));
-                }};
-            }
+            build_unexpected!(unexpected, self, separator, expected, context);
 
             match separator.kind {
                 TokenKind::Whitespace => {}
@@ -324,11 +344,11 @@ impl<'a> Parser<'a> {
             let next_part = match next_token.kind {
                 TokenKind::Word => {
                     self.advance();
-                    self.next_unchecked().content(self.input())
+                    self.next_existing().content(self.input())
                 }
                 TokenKind::QuotedText => {
                     self.advance();
-                    self.next_unchecked().content(self.input())
+                    self.next_existing().content(self.input())
                 }
 
                 TokenKind::GroupEnd if group_depth > 0 => {
@@ -366,6 +386,17 @@ impl<'a> Parser<'a> {
         Ok(SearchAtom::Title(full_title))
     }
 
+    fn parse_sequence(
+        &mut self,
+        first_query: ScoreQuery,
+        group_depth: usize,
+    ) -> Result<ScoreQuery> {
+        _ = first_query;
+        _ = group_depth;
+        todo!()
+    }
+
+    /// Default parser when a more specific context doesn't exist.
     fn parse_any(&mut self, group_depth: usize) -> Result<ScoreQuery> {
         self.skip_whitespace();
         let expected_first = ExpectedValue::Title
@@ -376,16 +407,23 @@ impl<'a> Parser<'a> {
             return Err(Error::unexpected_eof(expected_first));
         };
 
-        let first_query = match first_token.kind {
-            TokenKind::TagModePrefix => todo!(),
-            TokenKind::NameModePrefix => todo!(),
+        build_unexpected!(unexpected1, self, first_token, expected_first);
 
-            TokenKind::TagPrefix => todo!(),
-            TokenKind::NamePrefix => todo!(),
-            TokenKind::GroupStart => todo!(),
+        let first_query = match first_token.kind {
+            TokenKind::TagPrefix => self.parse_tag(group_depth)?,
+            TokenKind::NamePrefix => {
+                let atom = self.parse_name(group_depth)?;
+                ScoreQuery::Atom(atom)
+            }
+            TokenKind::GroupStart => {
+                let Some(group) = self.parse_group(group_depth)? else {
+                    return self.parse_any(group_depth);
+                };
+                group
+            }
             TokenKind::Word | TokenKind::QuotedText => {
-                let title = self.parse_title(first_token, group_depth)?;
-                ScoreQuery::Atom(title)
+                let atom = self.parse_title(first_token, group_depth)?;
+                ScoreQuery::Atom(atom)
             }
 
             TokenKind::Whitespace => unreachable!("we skipped whitespace"),
@@ -393,25 +431,49 @@ impl<'a> Parser<'a> {
             TokenKind::GroupEnd if group_depth > 0 => unreachable!(
                 "The group parser should check that the group isn't immediately closed"
             ),
-            TokenKind::GroupEnd => {
-                return Err(Error::unexpected(
-                    expected_first,
-                    first_token.display(self.input()),
-                ));
-            }
 
-            TokenKind::TagValueSeparator
+            TokenKind::GroupEnd
+            | TokenKind::TagValueSeparator
             | TokenKind::Or
             | TokenKind::Not
-            | TokenKind::NameSeparator => {
-                return Err(Error::unexpected(
-                    expected_first,
-                    first_token.display(self.input()),
-                ));
-            }
+            | TokenKind::NameSeparator => unexpected1!(),
+
+            TokenKind::TagModePrefix => unexpected1!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected1!(Help::NameModeAtStart),
         };
 
-        _ = first_query;
-        todo!();
+        let Some(second_token) = self.peek() else {
+            return Ok(first_query);
+        };
+
+        let expected_second = ExpectedValue::WhiteSpace;
+        let expected_second = if group_depth > 0 {
+            expected_second.or(DisplayToken::GroupEnd)
+        } else {
+            expected_second.into_expected()
+        };
+
+        build_unexpected!(unexpected2, self, second_token, expected_second);
+
+        match second_token.kind {
+            TokenKind::Whitespace => return self.parse_sequence(first_query, group_depth),
+
+            TokenKind::GroupEnd if group_depth > 0 => return Ok(first_query),
+
+            TokenKind::TagPrefix => unexpected2!(Help::SpaceBeforeTag),
+            TokenKind::GroupStart => unexpected2!(Help::SpaceBeforeGroup),
+            TokenKind::NamePrefix => unexpected2!(Help::SpaceBeforeName),
+            TokenKind::QuotedText => unexpected2!(Help::SpaceBeforeQuote),
+            TokenKind::Or => unexpected2!(Help::SpaceBeforeOr),
+            TokenKind::Not => unexpected2!(Help::SpaceBeforeNot),
+
+            TokenKind::GroupEnd
+            | TokenKind::NameSeparator
+            | TokenKind::Word
+            | TokenKind::TagValueSeparator => unexpected2!(),
+
+            TokenKind::TagModePrefix => unexpected2!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected2!(Help::NameModeAtStart),
+        }
     }
 }

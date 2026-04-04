@@ -154,8 +154,12 @@ pub enum Help {
     SpaceBeforeQuote,
     SpaceAfterQuote,
     SpaceBeforeOr,
+    SpaceAfterOr,
     SpaceBeforeNot,
     SpaceBeforeWord,
+
+    DoubleNegation,
+    OrMissingItem,
 }
 
 impl Display for Help {
@@ -181,8 +185,11 @@ impl Display for Help {
             Help::SpaceBeforeQuote => write!(f, "Add a space before the quoted text"),
             Help::SpaceAfterQuote => write!(f, "Add a space after the quoted text"),
             Help::SpaceBeforeOr => write!(f, "Add a space before the `|` operator"),
+            Help::SpaceAfterOr => write!(f, "Add a space after the `|` operator"),
             Help::SpaceBeforeNot => write!(f, "Add a space before the '!' operator"),
             Help::SpaceBeforeWord => write!(f, "Add a space before the word"),
+            Help::DoubleNegation => write!(f, "Double negation `!!` is not allowed"),
+            Help::OrMissingItem => write!(f, "The last item of the `|` sequence is missing"),
         }
     }
 }

@@ -2,8 +2,8 @@ mod error;
 mod lexer;
 
 use crate::query::{
-    AndQuery, Person, PersonError, PersonName, PersonNameError, Query, ScoreQuery, SearchAtom,
-    TagItemError,
+    AndQuery, NotQuery, OrQuery, Person, PersonError, PersonName, PersonNameError, Query,
+    ScoreQuery, SearchAtom, TagItemError,
 };
 use error::{AddHelp, IntoExpected, IntoExpectedValue};
 pub use error::{Context, Error, ErrorKind, Expected, ExpectedValue, Help, Result};
@@ -497,6 +497,9 @@ impl<'a> Parser<'a> {
 
                 match separator.kind {
                     TokenKind::Whitespace => {}
+                    TokenKind::GroupEnd if group_depth > 0 => {
+                        break;
+                    }
 
                     TokenKind::TagPrefix => unexpected1!(Help::SpaceBeforeTag),
                     TokenKind::GroupStart => unexpected1!(Help::SpaceBeforeGroup),
@@ -595,15 +598,210 @@ impl<'a> Parser<'a> {
         Ok(ScoreQuery::And(parts).simplify_sequence())
     }
 
-    fn parse_or(&self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
-        _ = first_query;
-        _ = group_depth;
-        todo!();
+    /// Parse an `|`-separated sequence of OR items.
+    ///
+    /// Called after the leading `|` has been consumed.
+    fn parse_or(&mut self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
+        let mut parts: Vec<OrQuery> = Vec::new();
+
+        match first_query {
+            ScoreQuery::Atom(a) => parts.push(OrQuery::Atom(a)),
+            ScoreQuery::And(items) => parts.push(OrQuery::And(items)),
+            ScoreQuery::Or(items) => parts.extend(items),
+            ScoreQuery::Not(not) => parts.push(OrQuery::Not(not)),
+        }
+
+        // `|` was already consumed by the caller. first_run consumes the
+        // required space after it; subsequent runs look for the full ` | `
+        // separator and also consume the space that follows.
+        let mut first_run = true;
+        loop {
+            if !first_run {
+                // The separator between OR items is (WS + `|` + WS).
+                let Some(separator) = self.peek()? else {
+                    break;
+                };
+
+                let expected_sep = ExpectedValue::WhiteSpace;
+                let expected_sep = if group_depth > 0 {
+                    expected_sep.or(DisplayToken::GroupEnd)
+                } else {
+                    expected_sep.into_expected()
+                };
+
+                build_unexpected!(unexpected_sep, self, separator, expected_sep, peek);
+
+                match separator.kind {
+                    TokenKind::Whitespace => {
+                        // Only a ` | ` continues the OR sequence.
+                        let Some(after_whitespace) = self.peek2()? else {
+                            break; // trailing whitespace, end of OR
+                        };
+                        if after_whitespace.kind != TokenKind::Or {
+                            break; // WS not followed by `|`, exit OR
+                        }
+                        self.advance2()?; // consume WS + `|`
+                    }
+
+                    TokenKind::GroupEnd if group_depth > 0 => break,
+
+                    TokenKind::TagPrefix => unexpected_sep!(Help::SpaceBeforeTag),
+                    TokenKind::GroupStart => unexpected_sep!(Help::SpaceBeforeGroup),
+                    TokenKind::NamePrefix => unexpected_sep!(Help::SpaceBeforeName),
+                    TokenKind::QuotedText => unexpected_sep!(Help::SpaceBeforeQuote),
+                    TokenKind::Word => unexpected_sep!(Help::SpaceBeforeWord),
+                    TokenKind::Not => unexpected_sep!(Help::SpaceBeforeNot),
+
+                    TokenKind::TagValueSeparator
+                    | TokenKind::GroupEnd
+                    | TokenKind::Or
+                    | TokenKind::NameSeparator => unexpected_sep!(),
+
+                    TokenKind::NameModePrefix => unexpected_sep!(Help::NameModeAtStart),
+                    TokenKind::TagModePrefix => unexpected_sep!(Help::TagModeAtStart),
+                }
+            }
+
+            // Both first_run and subsequent runs must consume WS after `|`.
+            let expected_ws = ExpectedValue::WhiteSpace;
+
+            build_unexpected!(unexpected_ws, self, ws_tok, expected_ws, peek);
+
+            match self.peek()? {
+                None => return Err(Error::unexpected_eof(expected_ws)),
+                Some(t) if t.kind != TokenKind::Whitespace => unexpected_ws!(Help::SpaceAfterOr),
+                _ => {}
+            }
+            self.advance()?;
+
+            // Parse the next OR item.
+            let Some(next_token) = self.peek()? else {
+                break;
+            };
+
+            let expected_item = ExpectedValue::Title
+                .or(ExpectedValue::TagExpression)
+                .or(ExpectedValue::NameExpression)
+                .or(ExpectedValue::Group)
+                .or(DisplayToken::Not);
+
+            build_unexpected!(unexpected_item, self, next_token, expected_item, peek);
+
+            let item = match next_token.kind {
+                TokenKind::TagPrefix => {
+                    self.advance()?;
+                    self.parse_tag(group_depth)?
+                }
+                TokenKind::GroupStart => {
+                    self.advance()?;
+                    let Some(group) = self.parse_group(group_depth)? else {
+                        continue;
+                    };
+                    group
+                }
+                TokenKind::NamePrefix => {
+                    self.advance()?;
+                    self.parse_name(group_depth).map(ScoreQuery::Atom)?
+                }
+                TokenKind::Not => {
+                    self.advance()?;
+                    self.parse_not(group_depth)?
+                }
+                TokenKind::QuotedText | TokenKind::Word => {
+                    let next_token = self.next_existing();
+                    self.parse_title(next_token, group_depth)
+                        .map(ScoreQuery::Atom)?
+                }
+
+                TokenKind::Or | TokenKind::TagValueSeparator | TokenKind::NameSeparator => {
+                    unexpected_item!()
+                }
+                TokenKind::GroupEnd => unexpected_item!(Help::OrMissingItem),
+
+                TokenKind::Whitespace => unreachable!("whitespace was just consumed"),
+
+                TokenKind::TagModePrefix => unexpected_item!(Help::TagModeAtStart),
+                TokenKind::NameModePrefix => unexpected_item!(Help::NameModeAtStart),
+            };
+
+            match item {
+                ScoreQuery::Atom(a) => parts.push(OrQuery::Atom(a)),
+                ScoreQuery::And(and) => parts.push(OrQuery::And(and)),
+                ScoreQuery::Or(or) => parts.extend(or),
+                ScoreQuery::Not(not) => parts.push(OrQuery::Not(not)),
+            }
+
+            first_run = false;
+        }
+
+        Ok(ScoreQuery::Or(parts).simplify_sequence())
     }
 
-    fn parse_not(&self, group_depth: usize) -> Result<ScoreQuery> {
-        _ = group_depth;
-        todo!();
+    /// Parse the operand of a `!` that has already been consumed.
+    ///
+    /// Delegates directly to the atom/group parsers. Double negation (`!(!x)`)
+    /// is flattened to `x`.
+    fn parse_not(&mut self, group_depth: usize) -> Result<ScoreQuery> {
+        let expected = ExpectedValue::Title
+            .or(ExpectedValue::TagExpression)
+            .or(ExpectedValue::NameExpression)
+            .or(ExpectedValue::Group);
+
+        let Some(token) = self.peek()? else {
+            return Err(Error::unexpected_eof(expected));
+        };
+
+        build_unexpected!(unexpected, self, token, expected, peek);
+
+        let inner: ScoreQuery = match token.kind {
+            TokenKind::Word | TokenKind::QuotedText => {
+                let token = self.next_existing();
+                self.parse_title(token, group_depth).map(ScoreQuery::Atom)?
+            }
+            TokenKind::TagPrefix => {
+                self.advance()?;
+                self.parse_tag(group_depth)?
+            }
+            TokenKind::GroupStart => {
+                self.advance()?;
+                match self.parse_group(group_depth)? {
+                    Some(q) => q,
+                    None => return self.parse_not(group_depth),
+                }
+            }
+            TokenKind::NamePrefix => {
+                self.advance()?;
+                self.parse_name(group_depth).map(ScoreQuery::Atom)?
+            }
+            TokenKind::Not => {
+                unexpected!(Help::DoubleNegation)
+            }
+
+            TokenKind::Whitespace => {
+                unreachable!("`!` is immediately followed by its operand")
+            }
+
+            TokenKind::Or
+            | TokenKind::GroupEnd
+            | TokenKind::TagValueSeparator
+            | TokenKind::NameSeparator => unexpected!(),
+            TokenKind::TagModePrefix => unexpected!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected!(Help::NameModeAtStart),
+        };
+
+        let not_query = match inner {
+            ScoreQuery::Atom(a) => NotQuery::Atom(a),
+            ScoreQuery::And(items) => NotQuery::And(items),
+            ScoreQuery::Or(items) => NotQuery::Or(items),
+            // flatten the nested not
+            ScoreQuery::Not(not) => match not {
+                NotQuery::Atom(atom) => return Ok(ScoreQuery::Atom(atom)),
+                NotQuery::And(and) => return Ok(ScoreQuery::And(and)),
+                NotQuery::Or(or) => return Ok(ScoreQuery::Or(or)),
+            },
+        };
+
+        Ok(ScoreQuery::Not(not_query))
     }
 
     /// Confirmed a whitespace after a the first toke in [`Self::parse_any`].

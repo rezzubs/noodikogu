@@ -260,22 +260,19 @@ impl<'a> Parser<'a> {
 
     fn parse_top(&mut self) -> Result<Query> {
         self.skip_whitespace();
-        let first = self.next().ok_or(Error::empty())?;
+        let first = self.peek().ok_or(Error::empty())?;
 
         match first.kind {
-            TokenKind::TagPrefix => todo!(),
-            TokenKind::TagModePrefix => self.parse_tag_mode(),
-            TokenKind::TagValueSeparator => todo!(),
-            TokenKind::NamePrefix => todo!(),
-            TokenKind::NameModePrefix => self.parse_name_mode(),
-            TokenKind::GroupStart => todo!(),
-            TokenKind::GroupEnd => todo!(),
-            TokenKind::Or => todo!(),
-            TokenKind::Not => todo!(),
-            TokenKind::NameSeparator => todo!(),
+            TokenKind::TagModePrefix => {
+                self.advance();
+                self.parse_tag_mode()
+            }
+            TokenKind::NameModePrefix => {
+                self.advance();
+                self.parse_name_mode()
+            }
             TokenKind::Whitespace => unreachable!("whitespace was already skipped"),
-            TokenKind::Word => todo!(),
-            TokenKind::QuotedText => todo!(),
+            _ => self.parse_any(0).map(Query::Score),
         }
     }
 

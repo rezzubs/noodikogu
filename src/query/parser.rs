@@ -399,10 +399,11 @@ impl<'a> Parser<'a> {
 
             match separator.kind {
                 TokenKind::Whitespace => {}
-                TokenKind::Word if first.kind == TokenKind::QuotedText => {
-                    unexpected!(Help::SpaceAfterQuote)
-                }
-                TokenKind::Word => unreachable!("The lexer should merge consecutive words."),
+                // A `Word` token as a separator (no whitespace before it) can
+                // only occur when the previous accumulated part ended with a
+                // closing `"`, because the lexer always merges consecutive word
+                // characters.
+                TokenKind::Word => unexpected!(Help::SpaceAfterQuote),
                 TokenKind::GroupEnd if group_depth > 0 => break,
 
                 TokenKind::TagPrefix => unexpected!(Help::SpaceBeforeTag),

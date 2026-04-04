@@ -618,7 +618,7 @@ impl<'a> Parser<'a> {
         loop {
             if !first_run {
                 // The separator between OR items is (WS + `|` + WS).
-                let Some(separator) = self.peek()? else {
+                let Some(whitespace) = self.peek()? else {
                     break;
                 };
 
@@ -629,16 +629,49 @@ impl<'a> Parser<'a> {
                     expected_sep.into_expected()
                 };
 
-                build_unexpected!(unexpected_sep, self, separator, expected_sep, peek);
+                build_unexpected!(unexpected_sep, self, whitespace, expected_sep, peek);
 
-                match separator.kind {
+                match whitespace.kind {
                     TokenKind::Whitespace => {
-                        // Only a ` | ` continues the OR sequence.
                         let Some(after_whitespace) = self.peek2()? else {
                             break; // trailing whitespace, end of OR
                         };
-                        if after_whitespace.kind != TokenKind::Or {
-                            break; // WS not followed by `|`, exit OR
+
+                        match after_whitespace.kind {
+                            // Only a ` | ` continues the OR sequence.
+                            TokenKind::Or => {}
+
+                            // Anything that is not `|` should mean the starting
+                            // of an AND sequence (which binds stronger). The
+                            // AND sequence already handles all invalid values.
+                            TokenKind::QuotedText
+                            | TokenKind::Word
+                            | TokenKind::TagPrefix
+                            | TokenKind::TagModePrefix
+                            | TokenKind::TagValueSeparator
+                            | TokenKind::NamePrefix
+                            | TokenKind::NameModePrefix
+                            | TokenKind::GroupStart
+                            | TokenKind::GroupEnd
+                            | TokenKind::Not
+                            | TokenKind::NameSeparator => {
+                                // skip the whitespace
+                                self.advance()?;
+
+                                let and_lhs = parts.pop().expect("This is the second run and there is already one item at the start of the first").to_score();
+                                let and_result = self.parse_and(and_lhs, group_depth)?;
+
+                                match and_result {
+                                    ScoreQuery::Atom(atom) => parts.push(OrQuery::Atom(atom)),
+                                    ScoreQuery::And(and) => parts.push(OrQuery::And(and)),
+                                    ScoreQuery::Or(or) => parts.extend(or),
+                                    ScoreQuery::Not(not) => parts.push(OrQuery::Not(not)),
+                                }
+
+                                continue;
+                            }
+
+                            TokenKind::Whitespace => unreachable!("previous element is whitespace"),
                         }
                         self.advance2()?; // consume WS + `|`
                     }

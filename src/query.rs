@@ -97,6 +97,16 @@ pub enum OrQuery {
     Not(NotQuery),
 }
 
+impl OrQuery {
+    pub fn to_score(self) -> ScoreQuery {
+        match self {
+            OrQuery::Atom(atom) => ScoreQuery::Atom(atom),
+            OrQuery::And(and) => ScoreQuery::And(and),
+            OrQuery::Not(not) => ScoreQuery::Not(not),
+        }
+    }
+}
+
 /// A term that can be negated with `!`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotQuery {

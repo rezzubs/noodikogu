@@ -51,7 +51,7 @@ impl Error {
     }
 
     pub(crate) fn invalid_person_name(invalid: char, name: impl Into<String>) -> Self {
-        Self::new(ErrorKind::InvalidTagName {
+        Self::new(ErrorKind::InvalidPersonName {
             invalid,
             name: name.into(),
         })

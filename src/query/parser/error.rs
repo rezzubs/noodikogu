@@ -6,10 +6,10 @@ use std::fmt::Display;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
-#[error("{kind}")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Error {
     pub help: Vec<Help>,
+    pub context: Option<Context>,
     pub kind: ErrorKind,
 }
 
@@ -17,6 +17,7 @@ impl Error {
     pub fn new(kind: ErrorKind) -> Self {
         Self {
             help: Vec::new(),
+            context: None,
             kind,
         }
     }
@@ -55,6 +56,21 @@ impl Error {
             invalid,
             name: name.into(),
         })
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.kind)?;
+        if let Some(context) = &self.context {
+            write!(f, " {}", context)?;
+        }
+
+        for h in &self.help {
+            write!(f, "\nHelp: {}", h)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -110,6 +126,17 @@ pub enum Help {
     TagModeSingleComponent,
     /// When there is content after a complete tag mode `@@` item.
     NameModeSingleComponent,
+    /// When tag mode `##` appears anywhere but the start of input.
+    TagModeAtStart,
+    /// When name mode `@@` appears anywhere but the start of input.
+    NameModeAtStart,
+
+    SpaceBeforeTag,
+    SpaceBeforeGroup,
+    SpaceBeforeName,
+    SpaceBeforeQuote,
+    SpaceBeforeOr,
+    SpaceBeforeNot,
 }
 
 impl Display for Help {
@@ -118,15 +145,23 @@ impl Display for Help {
             Help::TagModeSingleComponent => {
                 write!(
                     f,
-                    "tag mode (`##`) queries can only have a single component"
+                    "Tag mode (`##`) queries can only have a single component."
                 )
             }
             Help::NameModeSingleComponent => {
                 write!(
                     f,
-                    "name mode (`##`) queries can only have a single component"
+                    "Name mode (`##`) queries can only have a single component."
                 )
             }
+            Help::TagModeAtStart => write!(f, "Tag mode should be set at the beginning."),
+            Help::NameModeAtStart => write!(f, "Name mode should be set at the beginning."),
+            Help::SpaceBeforeTag => write!(f, "Add a space before the tag"),
+            Help::SpaceBeforeGroup => write!(f, "Add a space before the group"),
+            Help::SpaceBeforeName => write!(f, "Add a space before the name"),
+            Help::SpaceBeforeQuote => write!(f, "Add a space before the quoted text"),
+            Help::SpaceBeforeOr => write!(f, "Add a space before the 'or' operator"),
+            Help::SpaceBeforeNot => write!(f, "Add a space before the 'not' operator"),
         }
     }
 }
@@ -138,5 +173,18 @@ pub trait AddHelp<T> {
 impl<T> AddHelp<T> for Result<T> {
     fn add_help(self, help: Help) -> Result<T> {
         self.map_err(|e| e.add_help(help))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Context {
+    EndOfTitle,
+}
+
+impl Display for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Context::EndOfTitle => write!(f, "at the end of a title"),
+        }
     }
 }

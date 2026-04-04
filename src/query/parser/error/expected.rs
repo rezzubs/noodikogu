@@ -25,7 +25,7 @@ pub enum Expected {
 
 impl Expected {
     /// Chain another expected value
-    fn or(self, other: impl IntoExpectedValue) -> Self {
+    pub fn or(self, other: impl IntoExpectedValue) -> Self {
         let options = match self {
             Expected::OneOf { mut options } => {
                 let other_value = other.into_expected_value();
@@ -95,17 +95,25 @@ pub enum ExpectedValue {
     Eof,
     /// A tag name.
     TagName,
-    /// A name of a person
-    Name,
+    /// A single name of a person
+    NameSegment,
     /// Any whitespace
     WhiteSpace,
+    /// A full tag expression `#tag:value` or `#tag`.
+    TagExpression,
+    /// A `()` delimited group
+    Group,
+    /// A score title
+    Title,
+    /// A full name expression `@first.middle.last` or `@first`
+    NameExpression,
 }
 
 impl ExpectedValue {
     /// Chain another expected value
-    pub fn or(self, other: impl Into<ExpectedValue>) -> Expected {
+    pub fn or(self, other: impl IntoExpectedValue) -> Expected {
         Expected::OneOf {
-            options: Vec::from([self.into(), other.into()]),
+            options: Vec::from([self, other.into_expected_value()]),
         }
     }
 }
@@ -124,8 +132,12 @@ impl Display for ExpectedValue {
             }
             ExpectedValue::Eof => write!(f, "end of input"),
             ExpectedValue::TagName => write!(f, "a tag name"),
-            ExpectedValue::Name => write!(f, "a name"),
+            ExpectedValue::NameSegment => write!(f, "a name segment"),
             ExpectedValue::WhiteSpace => write!(f, "whitespace"),
+            ExpectedValue::TagExpression => write!(f, "a tag expression"),
+            ExpectedValue::Group => write!(f, "a group (`()`)"),
+            ExpectedValue::Title => write!(f, "a score title"),
+            ExpectedValue::NameExpression => write!(f, "a name expression"),
         }
     }
 }

@@ -14,18 +14,47 @@ pub struct Error {
 }
 
 impl Error {
-    fn add_help(mut self, help: Help) -> Error {
+    pub fn new(kind: ErrorKind) -> Self {
+        Self {
+            help: Vec::new(),
+            kind,
+        }
+    }
+
+    pub fn add_help(mut self, help: Help) -> Error {
         self.help.push(help);
         self
     }
-}
 
-impl From<ErrorKind> for Error {
-    fn from(value: ErrorKind) -> Self {
-        Error {
-            help: Vec::new(),
-            kind: value,
-        }
+    pub(crate) fn empty() -> Self {
+        Self::new(ErrorKind::Empty)
+    }
+
+    pub(crate) fn unexpected(expected: impl IntoExpected, found: DisplayToken) -> Self {
+        Self::new(ErrorKind::UnexpectedToken {
+            expected: expected.into_expected(),
+            found,
+        })
+    }
+
+    pub(crate) fn unexpected_eof(expected: impl IntoExpected) -> Self {
+        Self::new(ErrorKind::UnexpectedEof {
+            expected: expected.into_expected(),
+        })
+    }
+
+    pub(crate) fn invalid_person_name(invalid: char, name: impl Into<String>) -> Self {
+        Self::new(ErrorKind::InvalidTagName {
+            invalid,
+            name: name.into(),
+        })
+    }
+
+    pub(crate) fn invalid_tag_name(invalid: char, name: impl Into<String>) -> Self {
+        Self::new(ErrorKind::InvalidTagName {
+            invalid,
+            name: name.into(),
+        })
     }
 }
 

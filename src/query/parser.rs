@@ -54,10 +54,10 @@ impl<'a> Parser<'a> {
     fn expect(&mut self, kind: TokenKind, expected: impl IntoExpected) -> Result<()> {
         let expected = expected.into_expected();
         let Some(token) = self.next() else {
-            return Err(ErrorKind::UnexpectedEof { expected }.into());
+            return Err(Error::unexpected_eof(expected));
         };
         if token.kind != kind {
-            self.unexpected(token, expected)?;
+            return Err(Error::unexpected(expected, token.display(self.input())));
         }
         Ok(())
     }
@@ -66,11 +66,10 @@ impl<'a> Parser<'a> {
         let Some(token) = self.next() else {
             return Ok(());
         };
-        Err(ErrorKind::UnexpectedToken {
-            expected: ExpectedValue::Eof.into_expected(),
-            found: token.display(self.input()),
-        }
-        .into())
+        Err(Error::unexpected(
+            ExpectedValue::Eof,
+            token.display(self.input()),
+        ))
     }
 
     fn skip_whitespace(&mut self) {
@@ -81,20 +80,6 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-    }
-
-    /// Helper for returning an unexpected token error. Always returns `Err`. Pretends to return `T` for `Ok`.
-    fn unexpected_t<T>(&self, token: impl AsRef<Token>, expected: impl IntoExpected) -> Result<T> {
-        Err(ErrorKind::UnexpectedToken {
-            expected: expected.into_expected(),
-            found: token.as_ref().display(self.input()),
-        }
-        .into())
-    }
-
-    /// Helper for returning an unexpected token error. Always returns `Err`. Pretends to return `()` for `Ok`.
-    fn unexpected(&self, token: impl AsRef<Token>, expected: impl IntoExpected) -> Result<()> {
-        self.unexpected_t(token, expected)
     }
 
     /// Parses the section following a `##`.
@@ -111,16 +96,16 @@ impl<'a> Parser<'a> {
                 return Ok(Query::Tag { name: None });
             }
             _ => {
-                return self.unexpected_t(first, ExpectedValue::TagName.or(ExpectedValue::Eof));
+                return Err(Error::unexpected(
+                    ExpectedValue::TagName.or(ExpectedValue::Eof),
+                    first.display(self.input()),
+                ));
             }
         };
 
         let tag_name = tag_name_raw.parse().map_err(|err| match err {
             TagItemError::Empty => unreachable!("The lexer should not return empty strings"),
-            TagItemError::InvalidChar(invalid) => ErrorKind::InvalidTagName {
-                invalid,
-                name: tag_name_raw.to_owned(),
-            },
+            TagItemError::InvalidChar(invalid) => Error::invalid_tag_name(invalid, tag_name_raw),
         })?;
 
         self.skip_whitespace();
@@ -145,10 +130,9 @@ impl<'a> Parser<'a> {
                     PersonNameError::Empty => {
                         unreachable!("The lexer should not return empty words")
                     }
-                    PersonNameError::InvalidChar(invalid) => ErrorKind::InvalidPersonName {
-                        invalid,
-                        name: first_name_raw.into(),
-                    },
+                    PersonNameError::InvalidChar(invalid) => {
+                        Error::invalid_person_name(invalid, first_name_raw)
+                    }
                 })?
             }
             TokenKind::Whitespace => {
@@ -156,7 +140,12 @@ impl<'a> Parser<'a> {
 
                 return Ok(Query::Person(None));
             }
-            _ => self.unexpected_t(first, ExpectedValue::Name.or(ExpectedValue::Eof))?,
+            _ => {
+                return Err(Error::unexpected(
+                    ExpectedValue::Name.or(ExpectedValue::Eof),
+                    first.display(self.input()),
+                ));
+            }
         };
 
         let mut names = Vec::from([first_name]);
@@ -167,10 +156,12 @@ impl<'a> Parser<'a> {
                 TokenKind::Word => {
                     unreachable!("The lexer should not return two words in sequence")
                 }
-                _ => self.unexpected(
-                    separator,
-                    DisplayToken::NameSeparator.or(ExpectedValue::WhiteSpace),
-                )?,
+                _ => {
+                    return Err(Error::unexpected(
+                        DisplayToken::NameSeparator.or(ExpectedValue::WhiteSpace),
+                        separator.display(self.input()),
+                    ));
+                }
             }
 
             // Dot without a following word can be ignored
@@ -180,16 +171,16 @@ impl<'a> Parser<'a> {
                 TokenKind::Word => next_word.content(self.input()),
                 TokenKind::Whitespace => break,
                 _ => {
-                    self.unexpected_t(next_word, ExpectedValue::Name.or(ExpectedValue::WhiteSpace))?
+                    return Err(Error::unexpected(
+                        ExpectedValue::Name.or(ExpectedValue::WhiteSpace),
+                        next_word.display(self.input()),
+                    ));
                 }
             };
 
             let name = PersonName::parse(name).map_err(|err| match err {
                 PersonNameError::Empty => unreachable!("The lexer should not return empty words"),
-                PersonNameError::InvalidChar(invalid) => ErrorKind::InvalidPersonName {
-                    invalid,
-                    name: name.into(),
-                },
+                PersonNameError::InvalidChar(invalid) => Error::invalid_person_name(invalid, name),
             })?;
 
             names.push(name);
@@ -211,7 +202,7 @@ impl<'a> Parser<'a> {
 
     fn parse_top(&mut self) -> Result<Query> {
         self.skip_whitespace();
-        let first = self.next().ok_or(ErrorKind::Empty)?;
+        let first = self.next().ok_or(Error::empty())?;
 
         match first.kind {
             TokenKind::TagPrefix => todo!(),

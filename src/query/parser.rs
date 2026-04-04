@@ -453,9 +453,9 @@ impl<'a> Parser<'a> {
         build_unexpected!(unexpected2, self, second_token, expected_second);
 
         match second_token.kind {
-            TokenKind::Whitespace => return self.parse_sequence(first_query, group_depth),
+            TokenKind::Whitespace => self.parse_sequence(first_query, group_depth),
 
-            TokenKind::GroupEnd if group_depth > 0 => return Ok(first_query),
+            TokenKind::GroupEnd if group_depth > 0 => Ok(first_query),
 
             TokenKind::TagPrefix => unexpected2!(Help::SpaceBeforeTag),
             TokenKind::GroupStart => unexpected2!(Help::SpaceBeforeGroup),

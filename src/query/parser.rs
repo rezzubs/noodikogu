@@ -1033,6 +1033,141 @@ mod tests {
     }
 
     #[test]
+    fn quoted_then_word_joined() {
+        assert_eq!(parse(r#""hello" world"#), Ok(score(atom("hello world"))));
+    }
+
+    #[test]
+    fn word_then_quoted_joined() {
+        assert_eq!(parse(r#"hello "world""#), Ok(score(atom("hello world"))));
+    }
+
+    #[test]
+    fn word_quoted_word_joined() {
+        assert_eq!(
+            parse(r#"hello "beautiful" world"#),
+            Ok(score(atom("hello beautiful world")))
+        );
+    }
+
+    #[test]
+    fn multi_word_title_stops_at_or() {
+        assert_eq!(
+            parse("hello world | foo bar"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("hello world")),
+                OrQuery::Atom(t("foo bar")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn multi_word_title_stops_at_group() {
+        // title stops consuming when it sees a group start after whitespace
+        assert_eq!(
+            parse("hello world (foo)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("hello world")),
+                AndQuery::Atom(t("foo")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn multi_word_title_stops_at_not() {
+        assert_eq!(
+            parse("hello world !(foo)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("hello world")),
+                AndQuery::Not(NotQuery::Atom(t("foo"))),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn not_applied_to_full_multi_word_title() {
+        // `!` greedily takes all consecutive words as its operand
+        assert_eq!(
+            parse("!hello world"),
+            Ok(score(ScoreQuery::Not(NotQuery::Atom(t("hello world"))))),
+        );
+    }
+
+    #[test]
+    fn quoted_title_in_or() {
+        assert_eq!(
+            parse(r#""hello" | "world""#),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("hello")),
+                OrQuery::Atom(t("world")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn quoted_mixed_title_in_or() {
+        assert_eq!(
+            parse(r#"hello "world" | foo"#),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("hello world")),
+                OrQuery::Atom(t("foo")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn multi_word_title_inside_group() {
+        assert_eq!(parse("(hello world)"), Ok(score(atom("hello world"))));
+    }
+
+    #[test]
+    fn quoted_title_inside_group() {
+        assert_eq!(parse(r#"("hello world")"#), Ok(score(atom("hello world"))));
+    }
+
+    #[test]
+    fn mixed_title_inside_group() {
+        assert_eq!(
+            parse(r#"(hello "beautiful" world)"#),
+            Ok(score(atom("hello beautiful world")))
+        );
+    }
+
+    #[test]
+    fn group_with_multi_word_title_in_and() {
+        assert_eq!(
+            parse("(hello world) (foo bar)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("hello world")),
+                AndQuery::Atom(t("foo bar")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn not_of_multi_word_title_in_and() {
+        assert_eq!(
+            parse("(hello) !(foo bar)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("hello")),
+                AndQuery::Not(NotQuery::Atom(t("foo bar"))),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn title_and_group_in_or_flattened() {
+        assert_eq!(
+            parse("hello world | (foo | bar)"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("hello world")),
+                OrQuery::Atom(t("foo")),
+                OrQuery::Atom(t("bar")),
+            ]))),
+        );
+    }
+
+    #[test]
     fn single_group_unwrapped() {
         assert_eq!(parse("(hello)"), Ok(score(atom("hello"))));
     }
@@ -1150,7 +1285,6 @@ mod tests {
 
     #[test]
     fn and_binds_tighter_than_or_lhs() {
-        // (a) (b) | c  →  And(a, b) | c
         assert_eq!(
             parse("(a) (b) | c"),
             Ok(score(ScoreQuery::Or(vec![
@@ -1174,7 +1308,6 @@ mod tests {
 
     #[test]
     fn group_forces_or_inside_and() {
-        // (a | b) (c)  →  And(Or(a, b), c)
         assert_eq!(
             parse("(a | b) (c)"),
             Ok(score(ScoreQuery::And(vec![
@@ -1186,9 +1319,6 @@ mod tests {
 
     #[test]
     fn not_binds_tighter_than_or() {
-        // a | !b (c)  →  a | Not(And(b_title, c))
-        // Actually: !b is NOT(title "b"), then (c) ANDs with it
-        // Not > And > Or, so: a | (!b (c)) = a | And(Not(b), c)
         assert_eq!(
             parse("a | !(b) (c)"),
             Ok(score(ScoreQuery::Or(vec![
@@ -1427,6 +1557,25 @@ mod tests {
                     AndQuery::Atom(t("b")),
                     AndQuery::Atom(t("c")),
                 ])),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn word_directly_after_quoted_requires_space() {
+        // `a "b"c` — word after closing quote with no space
+        let err = parse(r###"a "b"c"###).unwrap_err();
+        assert!(err.help.contains(&Help::SpaceAfterQuote));
+    }
+
+    #[test]
+    fn empty_group_skipped_in_and_sequence() {
+        // (a) () (b) — the empty group should be ignored, giving And(a, b)
+        assert_eq!(
+            parse("(a) () (b)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("a")),
+                AndQuery::Atom(t("b")),
             ]))),
         );
     }

@@ -960,3 +960,509 @@ impl<'a> Parser<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::query::{
+        AndQuery, NotQuery, OrQuery, Person, PersonName, Query, ScoreQuery, SearchAtom, TagItem,
+    };
+
+    use super::{ErrorKind, Help, Result};
+
+    fn parse(input: &str) -> Result<Query> {
+        Query::parse(input, input.len())
+    }
+
+    fn t(s: &str) -> SearchAtom {
+        SearchAtom::Title(s.to_owned())
+    }
+
+    fn atom(s: &str) -> ScoreQuery {
+        ScoreQuery::Atom(t(s))
+    }
+
+    fn score(q: ScoreQuery) -> Query {
+        Query::Score(q)
+    }
+
+    fn pname(s: &str) -> PersonName {
+        PersonName::parse(s).unwrap()
+    }
+
+    fn titem(s: &str) -> TagItem {
+        TagItem::parse(s).unwrap()
+    }
+
+    #[test]
+    fn empty_input_is_error() {
+        assert_eq!(parse("").unwrap_err().kind, ErrorKind::Empty);
+    }
+
+    #[test]
+    fn single_word_title() {
+        assert_eq!(parse("hello"), Ok(score(atom("hello"))));
+    }
+
+    #[test]
+    fn multi_word_title_joined() {
+        assert_eq!(parse("hello world"), Ok(score(atom("hello world"))));
+    }
+
+    #[test]
+    fn three_word_title() {
+        assert_eq!(
+            parse("Pseudo Yoik extra"),
+            Ok(score(atom("Pseudo Yoik extra")))
+        );
+    }
+
+    #[test]
+    fn leading_whitespace_ignored() {
+        assert_eq!(parse("  hello"), Ok(score(atom("hello"))));
+    }
+
+    #[test]
+    fn quoted_text_as_title() {
+        assert_eq!(parse(r###""#literal""###), Ok(score(atom("#literal"))));
+    }
+
+    #[test]
+    fn two_quoted_parts_joined() {
+        assert_eq!(parse(r#""hello" "world""#), Ok(score(atom("hello world"))));
+    }
+
+    #[test]
+    fn single_group_unwrapped() {
+        assert_eq!(parse("(hello)"), Ok(score(atom("hello"))));
+    }
+
+    #[test]
+    fn nested_groups_unwrapped() {
+        assert_eq!(parse("((hello))"), Ok(score(atom("hello"))));
+    }
+
+    #[test]
+    fn not_word() {
+        assert_eq!(
+            parse("!hello"),
+            Ok(score(ScoreQuery::Not(NotQuery::Atom(t("hello"))))),
+        );
+    }
+
+    #[test]
+    fn not_group() {
+        assert_eq!(
+            parse("!(hello)"),
+            Ok(score(ScoreQuery::Not(NotQuery::Atom(t("hello"))))),
+        );
+    }
+
+    #[test]
+    fn double_not_cancels() {
+        assert_eq!(parse("!(!(hello))"), Ok(score(atom("hello"))));
+    }
+
+    #[test]
+    fn double_not_direct_is_error() {
+        let err = parse("!!hello").unwrap_err();
+        assert!(err.help.contains(&Help::DoubleNegation));
+    }
+
+    #[test]
+    fn or_two_titles() {
+        assert_eq!(
+            parse("a | b"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn or_three_titles_flat() {
+        assert_eq!(
+            parse("a | b | c"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+                OrQuery::Atom(t("c")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn or_with_not_rhs() {
+        assert_eq!(
+            parse("a | !b"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Not(NotQuery::Atom(t("b"))),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_two_groups() {
+        assert_eq!(
+            parse("(a) (b)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("a")),
+                AndQuery::Atom(t("b")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_three_groups() {
+        assert_eq!(
+            parse("(a) (b) (c)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("a")),
+                AndQuery::Atom(t("b")),
+                AndQuery::Atom(t("c")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_title_then_group() {
+        assert_eq!(
+            parse("hello (world)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("hello")),
+                AndQuery::Atom(t("world")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_with_not() {
+        assert_eq!(
+            parse("(a) !(b)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("a")),
+                AndQuery::Not(NotQuery::Atom(t("b"))),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_binds_tighter_than_or_lhs() {
+        // (a) (b) | c  →  And(a, b) | c
+        assert_eq!(
+            parse("(a) (b) | c"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::And(vec![AndQuery::Atom(t("a")), AndQuery::Atom(t("b"))]),
+                OrQuery::Atom(t("c")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_binds_tighter_than_or_rhs() {
+        // a | (b) (c)  →  a | And(b, c)
+        assert_eq!(
+            parse("a | (b) (c)"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::And(vec![AndQuery::Atom(t("b")), AndQuery::Atom(t("c"))]),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn group_forces_or_inside_and() {
+        // (a | b) (c)  →  And(Or(a, b), c)
+        assert_eq!(
+            parse("(a | b) (c)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Or(vec![OrQuery::Atom(t("a")), OrQuery::Atom(t("b"))]),
+                AndQuery::Atom(t("c")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn not_binds_tighter_than_or() {
+        // a | !b (c)  →  a | Not(And(b_title, c))
+        // Actually: !b is NOT(title "b"), then (c) ANDs with it
+        // Not > And > Or, so: a | (!b (c)) = a | And(Not(b), c)
+        assert_eq!(
+            parse("a | !(b) (c)"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::And(vec![
+                    AndQuery::Not(NotQuery::Atom(t("b"))),
+                    AndQuery::Atom(t("c")),
+                ]),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn tag_mode_alone() {
+        assert_eq!(parse("##"), Ok(Query::Tag { name: None }));
+    }
+
+    #[test]
+    fn tag_mode_trailing_space() {
+        assert_eq!(parse("## "), Ok(Query::Tag { name: None }));
+    }
+
+    #[test]
+    fn tag_mode_with_name() {
+        assert_eq!(
+            parse("##laulupidu"),
+            Ok(Query::Tag {
+                name: Some(titem("laulupidu"))
+            }),
+        );
+    }
+
+    #[test]
+    fn tag_mode_with_hyphenated_name() {
+        assert_eq!(
+            parse("##my-tag_name"),
+            Ok(Query::Tag {
+                name: Some(titem("my-tag_name"))
+            }),
+        );
+    }
+
+    #[test]
+    fn tag_mode_extra_content_is_error() {
+        let err = parse("##laulupidu extra").unwrap_err();
+        assert!(err.help.contains(&Help::TagModeSingleComponent));
+    }
+
+    #[test]
+    fn tag_mode_invalid_char_in_name_is_error() {
+        // `*` is not special to the lexer so it becomes part of the word,
+        // then TagItem validation rejects it.
+        let err = parse("##inva*lid").unwrap_err();
+        assert_eq!(
+            err.kind,
+            ErrorKind::InvalidTagName {
+                invalid: '*',
+                name: "inva*lid".into()
+            }
+        );
+    }
+
+    #[test]
+    fn name_mode_alone() {
+        assert_eq!(parse("@@"), Ok(Query::Person(None)));
+    }
+
+    #[test]
+    fn name_mode_trailing_space() {
+        assert_eq!(parse("@@ "), Ok(Query::Person(None)));
+    }
+
+    #[test]
+    fn name_mode_single_name() {
+        assert_eq!(
+            parse("@@Vettik"),
+            Ok(Query::Person(Some(
+                Person::new(vec![pname("Vettik")]).unwrap()
+            ))),
+        );
+    }
+
+    #[test]
+    fn name_mode_two_components() {
+        assert_eq!(
+            parse("@@Vettik.Tuudur"),
+            Ok(Query::Person(Some(
+                Person::new(vec![pname("Vettik"), pname("Tuudur")]).unwrap()
+            ))),
+        );
+    }
+
+    #[test]
+    fn name_mode_three_components() {
+        assert_eq!(
+            parse("@@First.Middle.Last"),
+            Ok(Query::Person(Some(
+                Person::new(vec![pname("First"), pname("Middle"), pname("Last")]).unwrap()
+            ))),
+        );
+    }
+
+    #[test]
+    fn name_mode_trailing_dot_ignored() {
+        assert_eq!(
+            parse("@@Vettik."),
+            Ok(Query::Person(Some(
+                Person::new(vec![pname("Vettik")]).unwrap()
+            ))),
+        );
+    }
+
+    #[test]
+    fn name_mode_extra_content_is_error() {
+        let err = parse("@@Vettik extra").unwrap_err();
+        assert!(err.help.contains(&Help::NameModeSingleComponent));
+    }
+
+    #[test]
+    fn name_mode_invalid_char_is_error() {
+        let err = parse("@@123").unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::InvalidPersonName { .. }));
+    }
+
+    #[test]
+    fn or_of_two_and_groups() {
+        assert_eq!(
+            parse("(a) (b) | (c) (d)"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::And(vec![AndQuery::Atom(t("a")), AndQuery::Atom(t("b"))]),
+                OrQuery::And(vec![AndQuery::Atom(t("c")), AndQuery::Atom(t("d"))]),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_of_two_or_groups() {
+        assert_eq!(
+            parse("(a | b) (c | d)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Or(vec![OrQuery::Atom(t("a")), OrQuery::Atom(t("b"))]),
+                AndQuery::Or(vec![OrQuery::Atom(t("c")), OrQuery::Atom(t("d"))]),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn not_of_or_group() {
+        assert_eq!(
+            parse("!(a | b)"),
+            Ok(score(ScoreQuery::Not(NotQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+            ])))),
+        );
+    }
+
+    #[test]
+    fn not_of_and_group() {
+        assert_eq!(
+            parse("!((a) (b))"),
+            Ok(score(ScoreQuery::Not(NotQuery::And(vec![
+                AndQuery::Atom(t("a")),
+                AndQuery::Atom(t("b")),
+            ])))),
+        );
+    }
+
+    #[test]
+    fn double_not_of_or_cancels() {
+        assert_eq!(
+            parse("!(!(a | b))"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn not_of_or_in_and() {
+        assert_eq!(
+            parse("!(a | b) (c)"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Not(NotQuery::Or(vec![
+                    OrQuery::Atom(t("a")),
+                    OrQuery::Atom(t("b")),
+                ])),
+                AndQuery::Atom(t("c")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn or_flattened_across_groups() {
+        assert_eq!(
+            parse("(a | b) | c"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+                OrQuery::Atom(t("c")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn three_level_nesting() {
+        assert_eq!(
+            parse("((a | b) (c))"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Or(vec![OrQuery::Atom(t("a")), OrQuery::Atom(t("b"))]),
+                AndQuery::Atom(t("c")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn mixed_three_level() {
+        assert_eq!(
+            parse("a | (b | (c) (d))"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+                OrQuery::And(vec![AndQuery::Atom(t("c")), AndQuery::Atom(t("d"))]),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn and_with_not_of_and() {
+        assert_eq!(
+            parse("(a) !((b) (c))"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("a")),
+                AndQuery::Not(NotQuery::And(vec![
+                    AndQuery::Atom(t("b")),
+                    AndQuery::Atom(t("c")),
+                ])),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn empty_quoted_string_is_error() {
+        let err = parse(r#""""#).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::EmptyQuotedString);
+    }
+
+    #[test]
+    fn or_without_space_before_is_error() {
+        let err = parse("a|b").unwrap_err();
+        assert!(err.help.contains(&Help::SpaceBeforeOr));
+    }
+
+    #[test]
+    fn or_without_space_after_is_error() {
+        let err = parse("a |b").unwrap_err();
+        assert!(err.help.contains(&Help::SpaceAfterOr));
+    }
+
+    #[test]
+    fn not_without_operand_is_error() {
+        let err = parse("!").unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::UnexpectedEof { .. }));
+    }
+
+    #[test]
+    fn tag_mode_mid_query_is_error() {
+        let err = parse("hello ##world").unwrap_err();
+        assert!(err.help.contains(&Help::TagModeAtStart));
+    }
+
+    #[test]
+    fn name_mode_mid_query_is_error() {
+        let err = parse("hello @@world").unwrap_err();
+        assert!(err.help.contains(&Help::NameModeAtStart));
+    }
+}

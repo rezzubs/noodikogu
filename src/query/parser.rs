@@ -5,7 +5,7 @@ use crate::query::{
     Person, PersonError, PersonName, PersonNameError, Query, ScoreQuery, SearchAtom, TagItemError,
 };
 use error::{AddHelp, IntoExpected, IntoExpectedValue};
-pub use error::{Error, ErrorKind, Expected, ExpectedValue, Help, Result};
+pub use error::{Context, Error, ErrorKind, Expected, ExpectedValue, Help, Result};
 pub use lexer::DisplayToken;
 use lexer::{Lexer, Token, TokenKind};
 
@@ -274,6 +274,8 @@ impl<'a> Parser<'a> {
         let mut parts = Vec::from([text]);
 
         while let Some(separator) = self.peek() {
+            let context = Context::EndOfTitle;
+
             let expected = ExpectedValue::WhiteSpace;
             let expected = if group_depth > 0 {
                 expected.or(DisplayToken::GroupEnd)
@@ -284,13 +286,14 @@ impl<'a> Parser<'a> {
             macro_rules! unexpected {
                 () => {{
                     let separator = self.next_unchecked();
-                    return Err(Error::unexpected(expected, separator.display(self.input())));
+                    return Err(Error::unexpected(expected, separator.display(self.input()))
+                        .add_context(context));
                 }};
                 ($help:expr) => {{
                     let token = self.next_unchecked();
-                    return Err(
-                        Error::unexpected(expected, token.display(self.input())).add_help($help)
-                    );
+                    return Err(Error::unexpected(expected, token.display(self.input()))
+                        .add_help($help)
+                        .add_context(context));
                 }};
             }
 

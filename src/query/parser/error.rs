@@ -27,6 +27,11 @@ impl Error {
         self
     }
 
+    pub fn add_context(mut self, context: Context) -> Error {
+        self.context = Some(context);
+        self
+    }
+
     pub(crate) fn empty() -> Self {
         Self::new(ErrorKind::Empty)
     }
@@ -168,11 +173,17 @@ impl Display for Help {
 
 pub trait AddHelp<T> {
     fn add_help(self, help: Help) -> Result<T>;
+
+    fn add_context(self, context: Context) -> Result<T>;
 }
 
 impl<T> AddHelp<T> for Result<T> {
     fn add_help(self, help: Help) -> Result<T> {
         self.map_err(|e| e.add_help(help))
+    }
+
+    fn add_context(self, context: Context) -> Result<T> {
+        self.map_err(|e| e.add_context(context))
     }
 }
 

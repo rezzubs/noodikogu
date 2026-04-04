@@ -137,6 +137,9 @@ pub struct Lexer<'a> {
     input: &'a str,
     iter: Peekable<Chars<'a>>,
     position: usize,
+    /// Whether the most recently emitted token was [`TokenKind::Whitespace`].
+    /// Used to prevent consecutive whitespace tokens when `""` is skipped.
+    last_was_whitespace: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -146,6 +149,7 @@ impl<'a> Lexer<'a> {
             input,
             iter: input.chars().peekable(),
             position: 0,
+            last_was_whitespace: false,
         }
     }
 
@@ -202,9 +206,18 @@ impl<'a> Iterator for Lexer<'a> {
                     match self.advance() {
                         Some('"') => {
                             if before == content_start {
-                                // Empty `""` — skip and continue.
+                                // Empty `""` — skip it. If the last emitted token was
+                                // whitespace, also consume any immediately following
+                                // whitespace to uphold the no-consecutive-whitespace
+                                // invariant.
+                                if self.last_was_whitespace {
+                                    while self.peek().is_some_and(|c| c.is_whitespace()) {
+                                        self.advance();
+                                    }
+                                }
                                 return self.next();
                             }
+                            self.last_was_whitespace = false;
                             return Some(Token {
                                 kind: TokenKind::QuotedText,
                                 span: content_start..before,
@@ -217,6 +230,7 @@ impl<'a> Iterator for Lexer<'a> {
                                 return None;
                             }
                             // Unterminated string — treat content as RawText.
+                            self.last_was_whitespace = false;
                             return Some(Token {
                                 kind: TokenKind::QuotedText,
                                 span: content_start..self.position,
@@ -239,6 +253,7 @@ impl<'a> Iterator for Lexer<'a> {
             }
         };
 
+        self.last_was_whitespace = kind == TokenKind::Whitespace;
         Some(Token {
             kind,
             span: start..self.position,
@@ -328,7 +343,6 @@ mod tests {
                 TokenKind::TagValueSeparator,
                 TokenKind::GroupStart,
                 TokenKind::Word,
-                TokenKind::Whitespace,
                 TokenKind::Whitespace,
                 TokenKind::Word,
                 TokenKind::GroupEnd,
@@ -443,6 +457,14 @@ mod tests {
     fn empty_raw_text_skipped() {
         // `""` is ignored; tokens after it are still yielded.
         assert_eq!(kinds("\"\" foo"), [TokenKind::Whitespace, TokenKind::Word]);
+    }
+
+    #[test]
+    fn empty_raw_text_between_whitespace_no_consecutive() {
+        // `""` surrounded by spaces must not produce two consecutive Whitespace tokens.
+        assert_eq!(kinds(" \"\" "), [TokenKind::Whitespace]);
+        assert_eq!(kinds(" \"\" foo"), [TokenKind::Whitespace, TokenKind::Word]);
+        assert_eq!(kinds("foo \"\" "), [TokenKind::Word, TokenKind::Whitespace]);
     }
 
     #[test]

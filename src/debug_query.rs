@@ -13,6 +13,8 @@ struct App {
     cursor: usize,
     /// Vertical scroll offset for the output pane (in rendered lines).
     scroll: u16,
+    /// Visible line count of the output pane (excluding borders), updated each draw.
+    output_height: u16,
     /// Whether the user has requested to quit.
     should_quit: bool,
 }
@@ -24,6 +26,7 @@ impl App {
             input: String::new(),
             cursor: 0,
             scroll: 0,
+            output_height: 0,
             should_quit: false,
         }
     }
@@ -46,11 +49,20 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    /// Returns the maximum sensible scroll offset based on content and pane height.
+    fn max_scroll(&self) -> u16 {
+        let line_count = parse_output(&self.input).lines().count() as u16;
+        line_count.saturating_sub(self.output_height)
+    }
+
+    fn draw(&mut self, frame: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(3)])
             .split(frame.area());
+
+        // Update output height (inner area, excluding borders) for scroll clamping.
+        self.output_height = chunks[0].height.saturating_sub(2);
 
         let output = Paragraph::new(parse_output(&self.input))
             .block(
@@ -93,18 +105,20 @@ impl App {
                 self.scroll = self.scroll.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('e') if ctrl => {
-                self.scroll = self.scroll.saturating_add(1);
+                self.scroll = self.scroll.saturating_add(1).min(self.max_scroll());
             }
             KeyCode::PageUp | KeyCode::Char('u') if ctrl => {
                 self.scroll = self.scroll.saturating_sub(10);
             }
             KeyCode::PageDown | KeyCode::Char('d') if ctrl => {
-                self.scroll = self.scroll.saturating_add(10);
+                self.scroll = self.scroll.saturating_add(10).min(self.max_scroll());
             }
             KeyCode::Up => self.scroll = self.scroll.saturating_sub(1),
-            KeyCode::Down => self.scroll = self.scroll.saturating_add(1),
+            KeyCode::Down => self.scroll = self.scroll.saturating_add(1).min(self.max_scroll()),
             KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(10),
-            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(10),
+            KeyCode::PageDown => {
+                self.scroll = self.scroll.saturating_add(10).min(self.max_scroll());
+            }
 
             // Cursor movement
             KeyCode::Left | KeyCode::Char('b') if ctrl => {
@@ -119,14 +133,14 @@ impl App {
             KeyCode::Char(c) if !ctrl => {
                 self.input.insert(self.cursor, c);
                 self.cursor += c.len_utf8();
-                self.scroll = 0;
+                self.scroll = self.scroll.min(self.max_scroll());
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
                     let prev = prev_char_boundary(&self.input, self.cursor);
                     self.input.drain(prev..self.cursor);
                     self.cursor = prev;
-                    self.scroll = 0;
+                    self.scroll = self.scroll.min(self.max_scroll());
                 }
             }
 

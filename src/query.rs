@@ -50,6 +50,37 @@ pub enum ScoreQuery {
     Not(NotQuery),
 }
 
+impl ScoreQuery {
+    // Flatten single length sequences to atoms.
+    fn simplify_sequence(self) -> ScoreQuery {
+        match self {
+            ScoreQuery::And(items) => {
+                if items.len() != 1 {
+                    return ScoreQuery::And(items);
+                }
+
+                match items.into_iter().next().expect("checked above") {
+                    AndQuery::Atom(atom) => ScoreQuery::Atom(atom),
+                    AndQuery::Or(or) => ScoreQuery::Or(or),
+                    AndQuery::Not(not) => ScoreQuery::Not(not),
+                }
+            }
+            ScoreQuery::Or(items) => {
+                if items.len() != 1 {
+                    return ScoreQuery::Or(items);
+                }
+
+                match items.into_iter().next().expect("checked above") {
+                    OrQuery::Atom(atom) => ScoreQuery::Atom(atom),
+                    OrQuery::And(and) => ScoreQuery::And(and),
+                    OrQuery::Not(not) => ScoreQuery::Not(not),
+                }
+            }
+            _ => self,
+        }
+    }
+}
+
 /// A term that can appear inside an AND expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AndQuery {

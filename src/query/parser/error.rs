@@ -6,42 +6,30 @@ use std::fmt::Display;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub trait AddHelp<T> {
-    fn with_help(self, help: impl Into<String>) -> Result<T>;
-}
-
-impl<T> AddHelp<T> for Result<T> {
-    fn with_help(self, help: impl Into<String>) -> Result<T> {
-        self.map_err(|e| e.with_help(help))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
 #[error("{kind}")]
 pub struct Error {
-    help: Option<String>,
-    kind: ErrorKind,
+    pub help: Vec<Help>,
+    pub kind: ErrorKind,
 }
 
 impl Error {
-    fn with_help(self, help: impl Into<String>) -> Error {
-        Error {
-            help: Some(help.into()),
-            ..self
-        }
+    fn add_help(mut self, help: Help) -> Error {
+        self.help.push(help);
+        self
     }
 }
 
 impl From<ErrorKind> for Error {
     fn from(value: ErrorKind) -> Self {
         Error {
-            help: None,
+            help: Vec::new(),
             kind: value,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
     UnexpectedEof {
         expected: Expected,
@@ -84,5 +72,42 @@ impl Display for ErrorKind {
                 )
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Help {
+    /// When there is content after a complete tag mode `##` item.
+    TagModeSingleComponent,
+    /// When there is content after a complete tag mode `@@` item.
+    NameModeSingleComponent,
+}
+
+impl Display for Help {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Help::TagModeSingleComponent => {
+                write!(
+                    f,
+                    "tag mode (`##`) queries can only have a single component"
+                )
+            }
+            Help::NameModeSingleComponent => {
+                write!(
+                    f,
+                    "name mode (`##`) queries can only have a single component"
+                )
+            }
+        }
+    }
+}
+
+pub trait AddHelp<T> {
+    fn add_help(self, help: Help) -> Result<T>;
+}
+
+impl<T> AddHelp<T> for Result<T> {
+    fn add_help(self, help: Help) -> Result<T> {
+        self.map_err(|e| e.add_help(help))
     }
 }

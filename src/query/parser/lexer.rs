@@ -79,7 +79,7 @@ pub enum TokenKind {
 }
 
 /// A displayable representation of a [`Token`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DisplayToken {
     /// `#`
     TagPrefix,

@@ -15,7 +15,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expected {
     /// One of multiple expected values.
     OneOf { options: Vec<ExpectedValue> },
@@ -87,7 +87,7 @@ impl IntoExpectedValue for DisplayToken {
 }
 
 /// A single
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ExpectedValue {
     /// A specific token.
     Token(DisplayToken),

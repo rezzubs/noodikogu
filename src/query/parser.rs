@@ -5,7 +5,7 @@ use crate::query::{
     Person, PersonError, PersonName, PersonNameError, Query, ScoreQuery, TagItemError,
 };
 use error::{AddHelp, IntoExpected, IntoExpectedValue};
-pub use error::{Error, ErrorKind, Expected, ExpectedValue, Result};
+pub use error::{Error, ErrorKind, Expected, ExpectedValue, Help, Result};
 pub use lexer::DisplayToken;
 use lexer::{Lexer, Token, TokenKind};
 
@@ -106,8 +106,7 @@ impl<'a> Parser<'a> {
         let tag_name_raw = match first.kind {
             TokenKind::Word => first.content(self.input()),
             TokenKind::Whitespace => {
-                self.expect_eof()
-                    .with_help("tag mode (`##`) can't have any content after it")?;
+                self.expect_eof().add_help(Help::TagModeSingleComponent)?;
 
                 return Ok(Query::Tag { name: None });
             }
@@ -126,8 +125,7 @@ impl<'a> Parser<'a> {
 
         self.skip_whitespace();
 
-        self.expect_eof()
-            .with_help("tag mode (`##`) can't have any content after it")?;
+        self.expect_eof().add_help(Help::TagModeSingleComponent)?;
 
         Ok(Query::Tag {
             name: Some(tag_name),
@@ -154,8 +152,7 @@ impl<'a> Parser<'a> {
                 })?
             }
             TokenKind::Whitespace => {
-                self.expect_eof()
-                    .with_help("`@@` mode should not have any terms after the name part")?;
+                self.expect_eof().add_help(Help::NameModeSingleComponent)?;
 
                 return Ok(Query::Person(None));
             }
@@ -200,8 +197,7 @@ impl<'a> Parser<'a> {
 
         self.skip_whitespace();
 
-        self.expect_eof()
-            .with_help("`@@` mode should not have any terms after the name part")?;
+        self.expect_eof().add_help(Help::NameModeSingleComponent)?;
 
         let person = match Person::new(names) {
             Ok(person) => person,

@@ -1,8 +1,10 @@
-use ratatui::Frame;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::{
+    Frame,
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    widgets::{Block, Borders, Paragraph, Wrap},
+};
 
 /// All mutable state for the debug-query TUI session.
 #[derive(Debug, Clone)]

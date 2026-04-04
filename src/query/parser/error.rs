@@ -140,6 +140,7 @@ pub enum Help {
     SpaceBeforeGroup,
     SpaceBeforeName,
     SpaceBeforeQuote,
+    SpaceAfterQuote,
     SpaceBeforeOr,
     SpaceBeforeNot,
 }
@@ -165,6 +166,7 @@ impl Display for Help {
             Help::SpaceBeforeGroup => write!(f, "Add a space before the group"),
             Help::SpaceBeforeName => write!(f, "Add a space before the name"),
             Help::SpaceBeforeQuote => write!(f, "Add a space before the quoted text"),
+            Help::SpaceAfterQuote => write!(f, "Add a space after the quoted text"),
             Help::SpaceBeforeOr => write!(f, "Add a space before the 'or' operator"),
             Help::SpaceBeforeNot => write!(f, "Add a space before the 'not' operator"),
         }

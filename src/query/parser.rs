@@ -316,6 +316,9 @@ impl<'a> Parser<'a> {
 
             match separator.kind {
                 TokenKind::Whitespace => {}
+                TokenKind::Word if first.kind == TokenKind::QuotedText => {
+                    unexpected!(Help::SpaceAfterQuote)
+                }
                 TokenKind::Word => unreachable!("The lexer should merge consecutive words."),
                 TokenKind::GroupEnd if group_depth > 0 => break,
 
@@ -383,13 +386,26 @@ impl<'a> Parser<'a> {
         Ok(SearchAtom::Title(full_title))
     }
 
-    fn parse_or(&self, first_query: ScoreQuery, group_depth: usize) -> ScoreQuery {
+    fn parse_and(&self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
+        _ = first_query;
+        _ = group_depth;
+
+        todo!()
+    }
+
+    fn parse_or(&self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
         _ = first_query;
         _ = group_depth;
         todo!();
     }
 
-    fn parse_sequence(
+    fn parse_not(&self, group_depth: usize) -> Result<ScoreQuery> {
+        _ = group_depth;
+        todo!();
+    }
+
+    /// Confirmed a whitespace after a the first toke in [`Self::parse_any`].
+    fn parse_maybe_sequence(
         &mut self,
         first_query: ScoreQuery,
         group_depth: usize,
@@ -397,7 +413,31 @@ impl<'a> Parser<'a> {
         _ = first_query;
         _ = group_depth;
 
-        todo!();
+        let Some(next) = self.peek() else {
+            return Ok(first_query);
+        };
+
+        match next.kind {
+            TokenKind::Or => {
+                self.advance();
+                self.parse_or(first_query, group_depth)
+            }
+            TokenKind::Whitespace => unreachable!(
+                "There was a whitespace before this and the lexer doesn't return consequtive whitespaces"
+            ),
+
+            TokenKind::TagPrefix
+            | TokenKind::TagModePrefix
+            | TokenKind::TagValueSeparator
+            | TokenKind::NamePrefix
+            | TokenKind::NameModePrefix
+            | TokenKind::GroupStart
+            | TokenKind::GroupEnd
+            | TokenKind::Not
+            | TokenKind::NameSeparator
+            | TokenKind::Word
+            | TokenKind::QuotedText => self.parse_and(first_query, group_depth),
+        }
     }
 
     fn parse_single(&mut self, group_depth: usize) -> Result<ScoreQuery> {
@@ -423,6 +463,7 @@ impl<'a> Parser<'a> {
             TokenKind::Word | TokenKind::QuotedText => self
                 .parse_title(first_token, group_depth)
                 .map(ScoreQuery::Atom),
+            TokenKind::Not => self.parse_not(group_depth),
 
             TokenKind::Whitespace => unreachable!("we skipped whitespace"),
 
@@ -433,7 +474,6 @@ impl<'a> Parser<'a> {
             TokenKind::GroupEnd
             | TokenKind::TagValueSeparator
             | TokenKind::Or
-            | TokenKind::Not
             | TokenKind::NameSeparator => unexpected!(),
 
             TokenKind::TagModePrefix => unexpected!(Help::TagModeAtStart),
@@ -447,7 +487,7 @@ impl<'a> Parser<'a> {
 
         let first_query = self.parse_single(group_depth)?;
 
-        let Some(token) = self.peek() else {
+        let Some(token) = self.next() else {
             return Ok(first_query);
         };
 
@@ -461,7 +501,7 @@ impl<'a> Parser<'a> {
         build_unexpected!(unexpected, self, second_token, expected_second);
 
         match token.kind {
-            TokenKind::Whitespace => self.parse_sequence(first_query, group_depth),
+            TokenKind::Whitespace => self.parse_maybe_sequence(first_query, group_depth),
 
             TokenKind::GroupEnd if group_depth > 0 => Ok(first_query),
 

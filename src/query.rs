@@ -17,8 +17,7 @@
 //!   unrepresentable. The parser simplifies double negations away before
 //!   constructing the AST.
 
-mod lexer;
-mod parser;
+pub mod parser;
 
 use std::ops::Deref;
 use std::str::FromStr;

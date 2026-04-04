@@ -1,220 +1,13 @@
-use std::fmt::Display;
+mod error;
+mod lexer;
 
 use crate::query::{
     Person, PersonError, PersonName, PersonNameError, Query, ScoreQuery, TagItemError,
-    lexer::{DisplayToken, Lexer, Token, TokenKind},
 };
-
-type Result<T> = std::result::Result<T, ParseError>;
-
-trait AddHelp<T> {
-    fn with_help(self, help: impl Into<String>) -> Result<T>;
-}
-
-impl<T> AddHelp<T> for Result<T> {
-    fn with_help(self, help: impl Into<String>) -> Result<T> {
-        self.map_err(|e| e.with_help(help))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{kind}")]
-pub struct ParseError {
-    help: Option<String>,
-    kind: ParseErrorKind,
-}
-
-impl ParseError {
-    fn with_help(self, help: impl Into<String>) -> ParseError {
-        ParseError {
-            help: Some(help.into()),
-            ..self
-        }
-    }
-}
-
-impl From<ParseErrorKind> for ParseError {
-    fn from(value: ParseErrorKind) -> Self {
-        ParseError {
-            help: None,
-            kind: value,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ParseErrorKind {
-    UnexpectedEof {
-        expected: Expected,
-    },
-    UnexpectedToken {
-        expected: Expected,
-        found: DisplayToken,
-    },
-    InvalidTagName {
-        invalid: char,
-        name: String,
-    },
-    InvalidPersonName {
-        invalid: char,
-        name: String,
-    },
-    Empty,
-}
-
-impl Display for ParseErrorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParseErrorKind::UnexpectedEof { expected } => {
-                write!(f, "Ran out of input, expected: {}", expected)
-            }
-            ParseErrorKind::UnexpectedToken { expected, found } => {
-                write!(f, "expected: {}, found: {}", expected, found)
-            }
-            ParseErrorKind::Empty => write!(f, "The input is empty"),
-            ParseErrorKind::InvalidTagName { invalid, name } => {
-                write!(
-                    f,
-                    "tag name `{name}` contains an invalid character: `{invalid}`"
-                )
-            }
-            ParseErrorKind::InvalidPersonName { invalid, name } => {
-                write!(
-                    f,
-                    "person name `{name}` contains an invalid character: `{invalid}`"
-                )
-            }
-        }
-    }
-}
-
-trait IntoExpected {
-    fn into_expected(self) -> Expected;
-}
-
-impl<T> IntoExpected for T
-where
-    T: IntoExpectedValue,
-{
-    fn into_expected(self) -> Expected {
-        Expected::One(self.into_expected_value())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expected {
-    /// One of multiple expected values.
-    OneOf { options: Vec<ExpectedValue> },
-    /// Exactly one expected value.
-    One(ExpectedValue),
-}
-
-impl Expected {
-    /// Chain another expected value
-    fn or(self, other: impl IntoExpectedValue) -> Self {
-        let options = match self {
-            Expected::OneOf { mut options } => {
-                let other_value = other.into_expected_value();
-                options.push(other_value);
-                options
-            }
-            Expected::One(value) => {
-                let other_value = other.into_expected_value();
-                Vec::from([value, other_value])
-            }
-        };
-
-        Self::OneOf { options }
-    }
-}
-
-impl IntoExpected for Expected {
-    fn into_expected(self) -> Expected {
-        self
-    }
-}
-
-impl Display for Expected {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Expected::OneOf { options } => {
-                write!(
-                    f,
-                    "one of: {}",
-                    options
-                        .iter()
-                        .map(|option| option.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            }
-            Expected::One(option) => {
-                write!(f, "one: {:?}", option)
-            }
-        }
-    }
-}
-
-trait IntoExpectedValue {
-    fn into_expected_value(self) -> ExpectedValue;
-
-    fn or(self, other: ExpectedValue) -> Expected
-    where
-        Self: Sized,
-    {
-        self.into_expected_value().or(other)
-    }
-}
-
-impl IntoExpectedValue for DisplayToken {
-    fn into_expected_value(self) -> ExpectedValue {
-        ExpectedValue::Token(self)
-    }
-}
-
-/// A single
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExpectedValue {
-    /// A specific token.
-    Token(DisplayToken),
-    /// End of input.
-    Eof,
-    /// A tag name.
-    TagName,
-    /// A name of a person
-    Name,
-    /// Any whitespace
-    WhiteSpace,
-}
-
-impl ExpectedValue {
-    /// Chain another expected value
-    pub fn or(self, other: impl Into<ExpectedValue>) -> Expected {
-        Expected::OneOf {
-            options: Vec::from([self.into(), other.into()]),
-        }
-    }
-}
-
-impl IntoExpectedValue for ExpectedValue {
-    fn into_expected_value(self) -> ExpectedValue {
-        self
-    }
-}
-
-impl Display for ExpectedValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExpectedValue::Token(token) => {
-                write!(f, "{}", token)
-            }
-            ExpectedValue::Eof => write!(f, "end of input"),
-            ExpectedValue::TagName => write!(f, "a tag name"),
-            ExpectedValue::Name => write!(f, "a name"),
-            ExpectedValue::WhiteSpace => write!(f, "whitespace"),
-        }
-    }
-}
+use error::{AddHelp, IntoExpected, IntoExpectedValue};
+pub use error::{Error, ErrorKind, Expected, ExpectedValue, Result};
+pub use lexer::DisplayToken;
+use lexer::{Lexer, Token, TokenKind};
 
 struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -261,7 +54,7 @@ impl<'a> Parser<'a> {
     fn expect(&mut self, kind: TokenKind, expected: impl IntoExpected) -> Result<()> {
         let expected = expected.into_expected();
         let Some(token) = self.next() else {
-            return Err(ParseErrorKind::UnexpectedEof { expected }.into());
+            return Err(ErrorKind::UnexpectedEof { expected }.into());
         };
         if token.kind != kind {
             self.unexpected(token, expected)?;
@@ -273,7 +66,7 @@ impl<'a> Parser<'a> {
         let Some(token) = self.next() else {
             return Ok(());
         };
-        Err(ParseErrorKind::UnexpectedToken {
+        Err(ErrorKind::UnexpectedToken {
             expected: ExpectedValue::Eof.into_expected(),
             found: token.display(self.input()),
         }
@@ -292,7 +85,7 @@ impl<'a> Parser<'a> {
 
     /// Helper for returning an unexpected token error. Always returns `Err`. Pretends to return `T` for `Ok`.
     fn unexpected_t<T>(&self, token: impl AsRef<Token>, expected: impl IntoExpected) -> Result<T> {
-        Err(ParseErrorKind::UnexpectedToken {
+        Err(ErrorKind::UnexpectedToken {
             expected: expected.into_expected(),
             found: token.as_ref().display(self.input()),
         }
@@ -325,7 +118,7 @@ impl<'a> Parser<'a> {
 
         let tag_name = tag_name_raw.parse().map_err(|err| match err {
             TagItemError::Empty => unreachable!("The lexer should not return empty strings"),
-            TagItemError::InvalidChar(invalid) => ParseErrorKind::InvalidTagName {
+            TagItemError::InvalidChar(invalid) => ErrorKind::InvalidTagName {
                 invalid,
                 name: tag_name_raw.to_owned(),
             },
@@ -354,7 +147,7 @@ impl<'a> Parser<'a> {
                     PersonNameError::Empty => {
                         unreachable!("The lexer should not return empty words")
                     }
-                    PersonNameError::InvalidChar(invalid) => ParseErrorKind::InvalidPersonName {
+                    PersonNameError::InvalidChar(invalid) => ErrorKind::InvalidPersonName {
                         invalid,
                         name: first_name_raw.into(),
                     },
@@ -396,7 +189,7 @@ impl<'a> Parser<'a> {
 
             let name = PersonName::parse(name).map_err(|err| match err {
                 PersonNameError::Empty => unreachable!("The lexer should not return empty words"),
-                PersonNameError::InvalidChar(invalid) => ParseErrorKind::InvalidPersonName {
+                PersonNameError::InvalidChar(invalid) => ErrorKind::InvalidPersonName {
                     invalid,
                     name: name.into(),
                 },
@@ -422,7 +215,7 @@ impl<'a> Parser<'a> {
 
     fn parse_top(&mut self) -> Result<Query> {
         self.skip_whitespace();
-        let first = self.next().ok_or(ParseErrorKind::Empty)?;
+        let first = self.next().ok_or(ErrorKind::Empty)?;
 
         match first.kind {
             TokenKind::TagPrefix => todo!(),

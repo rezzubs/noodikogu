@@ -1,0 +1,131 @@
+use std::fmt::Display;
+
+use crate::query::parser::DisplayToken;
+
+pub trait IntoExpected {
+    fn into_expected(self) -> Expected;
+}
+
+impl<T> IntoExpected for T
+where
+    T: IntoExpectedValue,
+{
+    fn into_expected(self) -> Expected {
+        Expected::One(self.into_expected_value())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expected {
+    /// One of multiple expected values.
+    OneOf { options: Vec<ExpectedValue> },
+    /// Exactly one expected value.
+    One(ExpectedValue),
+}
+
+impl Expected {
+    /// Chain another expected value
+    fn or(self, other: impl IntoExpectedValue) -> Self {
+        let options = match self {
+            Expected::OneOf { mut options } => {
+                let other_value = other.into_expected_value();
+                options.push(other_value);
+                options
+            }
+            Expected::One(value) => {
+                let other_value = other.into_expected_value();
+                Vec::from([value, other_value])
+            }
+        };
+
+        Self::OneOf { options }
+    }
+}
+
+impl IntoExpected for Expected {
+    fn into_expected(self) -> Expected {
+        self
+    }
+}
+
+impl Display for Expected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expected::OneOf { options } => {
+                write!(
+                    f,
+                    "one of: {}",
+                    options
+                        .iter()
+                        .map(|option| option.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            Expected::One(option) => {
+                write!(f, "one: {:?}", option)
+            }
+        }
+    }
+}
+
+pub trait IntoExpectedValue {
+    fn into_expected_value(self) -> ExpectedValue;
+
+    fn or(self, other: ExpectedValue) -> Expected
+    where
+        Self: Sized,
+    {
+        self.into_expected_value().or(other)
+    }
+}
+
+impl IntoExpectedValue for DisplayToken {
+    fn into_expected_value(self) -> ExpectedValue {
+        ExpectedValue::Token(self)
+    }
+}
+
+/// A single
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpectedValue {
+    /// A specific token.
+    Token(DisplayToken),
+    /// End of input.
+    Eof,
+    /// A tag name.
+    TagName,
+    /// A name of a person
+    Name,
+    /// Any whitespace
+    WhiteSpace,
+}
+
+impl ExpectedValue {
+    /// Chain another expected value
+    pub fn or(self, other: impl Into<ExpectedValue>) -> Expected {
+        Expected::OneOf {
+            options: Vec::from([self.into(), other.into()]),
+        }
+    }
+}
+
+impl IntoExpectedValue for ExpectedValue {
+    fn into_expected_value(self) -> ExpectedValue {
+        self
+    }
+}
+
+impl Display for ExpectedValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExpectedValue::Token(token) => {
+                write!(f, "{}", token)
+            }
+            ExpectedValue::Eof => write!(f, "end of input"),
+            ExpectedValue::TagName => write!(f, "a tag name"),
+            ExpectedValue::Name => write!(f, "a name"),
+            ExpectedValue::WhiteSpace => write!(f, "whitespace"),
+        }
+    }
+}

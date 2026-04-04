@@ -33,6 +33,12 @@ pub enum Query {
     Person(Option<Person>),
 }
 
+impl Query {
+    pub fn parse(input: &str, cursor_pos: usize) -> parser::Result<Self> {
+        parser::Parser::new(input, cursor_pos).parse_top()
+    }
+}
+
 /// A score-mode boolean query.
 ///
 /// Combines search atoms with AND, OR, and NOT.

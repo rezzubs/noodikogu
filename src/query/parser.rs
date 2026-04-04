@@ -9,7 +9,7 @@ pub use error::{Context, Error, ErrorKind, Expected, ExpectedValue, Help, Result
 pub use lexer::DisplayToken;
 use lexer::{Lexer, Token, TokenKind};
 
-struct Parser<'a> {
+pub(crate) struct Parser<'a> {
     lexer: Lexer<'a>,
     cursor_pos: usize,
     peeked: (Option<Token>, Option<Token>),
@@ -258,7 +258,7 @@ impl<'a> Parser<'a> {
         Ok(Query::Person(Some(person)))
     }
 
-    fn parse_top(&mut self) -> Result<Query> {
+    pub(crate) fn parse_top(&mut self) -> Result<Query> {
         self.skip_whitespace();
         let first = self.peek().ok_or(Error::empty())?;
 

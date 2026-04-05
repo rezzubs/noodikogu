@@ -3,6 +3,7 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
@@ -76,13 +77,13 @@ impl App {
             .scroll((self.scroll, 0));
         frame.render_widget(output, chunks[0]);
 
-        let input_widget = Paragraph::new(self.input.as_str())
+        let input_widget = Paragraph::new(highlighted_input(&self.input))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Query input "),
             )
-            .style(Style::default().fg(Color::Yellow));
+            .style(Style::default());
         frame.render_widget(input_widget, chunks[1]);
 
         // Place cursor at the cursor byte offset, inside the border.
@@ -170,6 +171,28 @@ fn next_char_boundary(s: &str, pos: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Builds the input line, highlighting the error span in red when parsing fails.
+///
+/// Raw spans inherit the paragraph's yellow default style; only the erroneous
+/// region is explicitly coloured red.
+fn highlighted_input(input: &str) -> Line<'_> {
+    let Err(err) = noodikogu::query::Query::parse(input, 0) else {
+        return Line::raw(input);
+    };
+    let Some(span) = err.span else {
+        return Line::raw(input);
+    };
+    // Empty or out-of-bounds spans (e.g. EOF errors at len..len) have nothing to colour.
+    if span.is_empty() || span.end > input.len() {
+        return Line::raw(input);
+    }
+    Line::from(vec![
+        Span::raw(&input[..span.start]),
+        Span::styled(&input[span.clone()], Style::default().fg(Color::Red)),
+        Span::raw(&input[span.end..]),
+    ])
 }
 
 /// Formats the parse result: Display error (if any) followed by the debug print.

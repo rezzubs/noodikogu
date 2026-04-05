@@ -3,7 +3,7 @@ mod lexer;
 
 use crate::query::{
     AndQuery, NotQuery, OrQuery, Person, PersonError, PersonName, PersonNameError, Query,
-    ScoreQuery, SearchAtom, TagItemError,
+    ScoreQuery, SearchAtom, Tag, TagItem, TagItemError,
 };
 use error::{AddHelp, IntoExpected, IntoExpectedValue};
 pub use error::{Context, Error, ErrorKind, Expected, ExpectedValue, Help, Result};
@@ -351,11 +351,97 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_tag_value(&mut self, tag_name: TagItem, group_depth: usize) -> Result<ScoreQuery> {
+        todo!()
+    }
+
     /// Parses a tag expression (`#name` or `#name:value`) after the `#` has
     /// been consumed.
     fn parse_tag(&mut self, group_depth: usize) -> Result<ScoreQuery> {
         _ = group_depth;
-        todo!()
+
+        let expected = ExpectedValue::TagName;
+
+        let name_token = self
+            .next()?
+            .ok_or(Error::unexpected_eof(expected.clone()))?;
+
+        build_unexpected_next!(unexpected_name, self, name_token, expected);
+
+        let name = match name_token.kind {
+            TokenKind::Word => {
+                let name = name_token.content(self.input());
+                TagItem::parse(name).map_err(|err| match err {
+                    TagItemError::Empty => {
+                        unreachable!("The lexer should not produce empty word tokens")
+                    }
+                    TagItemError::InvalidChar(invalid) => Error::new(ErrorKind::InvalidTagName {
+                        name: name.into(),
+                        invalid,
+                    }),
+                })?
+            }
+
+            TokenKind::TagValueSeparator => unexpected_name!(Help::AddTagNameBeforeValue),
+            TokenKind::QuotedText => {
+                return Err(Error::new(ErrorKind::QuotedTagName).add_help(Help::QuotedTagName));
+            }
+
+            TokenKind::NamePrefix
+            | TokenKind::GroupStart
+            | TokenKind::GroupEnd
+            | TokenKind::Or
+            | TokenKind::Not
+            | TokenKind::NameSeparator
+            | TokenKind::Whitespace => unexpected_name!(),
+
+            TokenKind::TagPrefix => {
+                unreachable!("The lexer should interpret `##` as the tag mode prefix.")
+            }
+
+            TokenKind::TagModePrefix => unexpected_name!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected_name!(Help::NameModeAtStart),
+        };
+
+        let Some(separator) = self.peek()? else {
+            return Ok(ScoreQuery::Atom(SearchAtom::Tag(Tag { name, value: None })));
+        };
+
+        let expected = DisplayToken::TagValueSeparator.or(ExpectedValue::WhiteSpace);
+        let expected = if group_depth > 0 {
+            expected.or(DisplayToken::GroupEnd)
+        } else {
+            expected
+        };
+
+        build_unexpected_peek!(unexpected_sep, self, separator, expected);
+
+        match separator.kind {
+            TokenKind::TagValueSeparator => {
+                self.advance()?;
+                self.parse_tag_value(name, group_depth)
+            }
+            TokenKind::Whitespace => {
+                Ok(ScoreQuery::Atom(SearchAtom::Tag(Tag { name, value: None })))
+            }
+            TokenKind::GroupEnd if group_depth > 0 => {
+                Ok(ScoreQuery::Atom(SearchAtom::Tag(Tag { name, value: None })))
+            }
+
+            TokenKind::GroupStart | TokenKind::Word | TokenKind::Not => {
+                unexpected_sep!(Help::ForgottenValueSep)
+            }
+
+            TokenKind::TagPrefix
+            | TokenKind::NamePrefix
+            | TokenKind::Or
+            | TokenKind::NameSeparator
+            | TokenKind::QuotedText
+            | TokenKind::GroupEnd => unexpected_sep!(),
+
+            TokenKind::TagModePrefix => unexpected_sep!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected_sep!(Help::NameModeAtStart),
+        }
     }
 
     /// Parses a person name expression (`@Name1.Name2`) after the `@` has been

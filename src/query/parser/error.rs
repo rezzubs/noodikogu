@@ -110,6 +110,7 @@ pub enum ErrorKind {
     /// An empty quoted string `""` appeared in the input.
     EmptyQuotedString,
     Empty,
+    QuotedTagName,
 }
 
 impl Display for ErrorKind {
@@ -135,6 +136,7 @@ impl Display for ErrorKind {
                     "person name `{name}` contains an invalid character: `{invalid}`"
                 )
             }
+            ErrorKind::QuotedTagName => write!(f, "tag names should not be quoted"),
         }
     }
 }
@@ -162,6 +164,10 @@ pub enum Help {
 
     DoubleNegation,
     OrMissingItem,
+
+    QuotedTagName,
+    AddTagNameBeforeValue,
+    ForgottenValueSep,
 }
 
 impl Display for Help {
@@ -192,6 +198,13 @@ impl Display for Help {
             Help::SpaceBeforeWord => write!(f, "Add a space before the word"),
             Help::DoubleNegation => write!(f, "Double negation `!!` is not allowed"),
             Help::OrMissingItem => write!(f, "The last item of the `|` sequence is missing"),
+            Help::QuotedTagName => write!(f, "Remove the quotes"),
+            Help::AddTagNameBeforeValue => {
+                write!(f, "Add a tag name before the value separator (`:`)")
+            }
+            Help::ForgottenValueSep => {
+                write!(f, "You may have forgotten the value separator (`:`)")
+            }
         }
     }
 }

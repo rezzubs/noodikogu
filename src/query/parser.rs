@@ -10,12 +10,16 @@ pub use error::{Context, Error, ErrorKind, Expected, ExpectedValue, Help, Result
 pub use lexer::DisplayToken;
 use lexer::{Lexer, Token, TokenKind};
 
-pub(crate) struct Parser<'a> {
-    lexer: Lexer<'a>,
-    cursor_pos: usize,
-    peeked: (Option<Result<Token>>, Option<Result<Token>>),
-}
-
+/// Defines a local `$macro_name!` macro that, when invoked, consumes the next
+/// token and returns an [`Error::unexpected`] from the enclosing function.
+///
+/// Two flavours:
+/// - `$macro_name!()` — plain unexpected error.
+/// - `$macro_name!($help)` — unexpected error with an attached [`Help`] note.
+///
+/// The `peek` / `nopeek` suffix controls whether the offending token still
+/// needs to be consumed (`peek`) or has already been consumed (`nopeek`). An
+/// optional `$context` ident adds a [`Context`] to the error.
 macro_rules! build_unexpected {
     ($macro_name:ident, $self:ident, $token:ident, $expected:ident, peek) => {
         macro_rules! $macro_name {
@@ -73,11 +77,26 @@ macro_rules! build_unexpected {
     };
 }
 
+/// A recursive-descent parser for the catalogue query language.
+///
+/// Maintains up to two tokens of lookahead via an internal peek buffer so that
+/// the grammar can be parsed without backtracking.
+pub(crate) struct Parser<'a> {
+    lexer: Lexer<'a>,
+    cursor_pos: usize,
+    peeked: (Option<Result<Token>>, Option<Result<Token>>),
+}
+
 impl<'a> Parser<'a> {
+    /// Creates a new parser over `input` with the cursor at `cursor_pos`.
     pub fn new(input: &'a str, cursor_pos: usize) -> Self {
         Self::new_with_lexer(Lexer::new(input), cursor_pos)
     }
 
+    /// Creates a parser from an already-constructed [`Lexer`].
+    ///
+    /// Useful in tests or when the caller needs to configure the lexer
+    /// directly.
     pub fn new_with_lexer(lexer: Lexer<'a>, cursor_pos: usize) -> Self {
         Self {
             lexer,
@@ -86,6 +105,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Returns a reference to the next token without consuming it.
     fn peek(&mut self) -> Result<Option<&Token>> {
         if self.peeked.0.is_none() {
             self.peeked.0 = self.lexer.next().map(|r| r.map_err(Into::into));
@@ -112,6 +132,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consumes and returns the next token.
     fn next(&mut self) -> Result<Option<Token>> {
         let result = if let Some(result) = self.peeked.0.take() {
             self.peeked.0 = self.peeked.1.take();
@@ -134,6 +155,7 @@ impl<'a> Parser<'a> {
         self.next().map(|_| ())
     }
 
+    /// Consumes the next two tokens, discarding both.
     fn advance2(&mut self) -> Result<()> {
         self.next()?;
         self.next().map(|_| ())
@@ -167,6 +189,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Consumes a leading [`TokenKind::Whitespace`] token if one is present.
     fn skip_whitespace(&mut self) -> Result<()> {
         if self
             .peek()?
@@ -301,6 +324,11 @@ impl<'a> Parser<'a> {
         Ok(Query::Person(Some(person)))
     }
 
+    /// Parses a complete query string and returns the top-level [`Query`] node.
+    ///
+    /// Dispatches to tag mode (`##`), people mode (`@@`), or score mode based
+    /// on the first non-whitespace token. Returns [`ErrorKind::Empty`] if the
+    /// input contains only whitespace or is empty.
     pub(crate) fn parse_top(&mut self) -> Result<Query> {
         self.skip_whitespace()?;
         let first = self.peek()?.ok_or(Error::empty())?;
@@ -319,17 +347,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses a tag expression (`#name` or `#name:value`) after the `#` has
+    /// been consumed.
     fn parse_tag(&mut self, group_depth: usize) -> Result<ScoreQuery> {
         _ = group_depth;
         todo!()
     }
 
+    /// Parses a person name expression (`@Name1.Name2`) after the `@` has been
+    /// consumed.
     fn parse_name(&mut self, group_depth: usize) -> Result<SearchAtom> {
         _ = group_depth;
         todo!()
     }
 
-    /// Parse the section after a `(`.
+    /// Parses the contents of a group after the opening `(` has been consumed.
+    ///
+    /// Returns `None` if the group is empty (no content before the `)` or EOF),
+    /// in which case the caller should skip it. Returns `Some` for non-empty
+    /// groups regardless of whether the closing `)` is present — an unclosed
+    /// group is accepted and its content is returned as-is.
     fn parse_group(&mut self, group_depth: usize) -> Result<Option<ScoreQuery>> {
         let Some(peeked) = self.peek()? else {
             // expecting that unclosed groups will close at EOF.
@@ -374,6 +411,12 @@ impl<'a> Parser<'a> {
         Ok(Some(query))
     }
 
+    /// Parses a title search term starting from `first`, greedily joining
+    /// consecutive words and quoted strings into a single
+    /// [`SearchAtom::Title`].
+    ///
+    /// Stops at `|`, `!`, `(`, `@`, `#`, or `)` (inside a group). The parts are
+    /// joined with spaces, matching how FTS5 will receive them.
     fn parse_title(&mut self, first: Token, group_depth: usize) -> Result<SearchAtom> {
         debug_assert!(matches!(
             first.kind,
@@ -468,6 +511,13 @@ impl<'a> Parser<'a> {
         Ok(SearchAtom::Title(full_title))
     }
 
+    /// Parses a space-separated AND sequence starting from `first_query`.
+    ///
+    /// Called after the whitespace following the first term has already been
+    /// consumed. Collects additional terms separated by whitespace and flattens
+    /// nested AND nodes into a single [`ScoreQuery::And`]. If a `|` is
+    /// encountered, hands off to [`Self::parse_or`] with the AND so far as the
+    /// left-hand side.
     fn parse_and(&mut self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
         let mut parts = Vec::new();
 
@@ -599,9 +649,14 @@ impl<'a> Parser<'a> {
         Ok(ScoreQuery::And(parts).simplify_sequence())
     }
 
-    /// Parse an `|`-separated sequence of OR items.
+    /// Parses a `|`-separated OR sequence starting from `first_query`.
     ///
-    /// Called after the leading `|` has been consumed.
+    /// Called after the leading `|` has been consumed. Each OR item is
+    /// separated by ` | ` (whitespace required on both sides). If whitespace
+    /// after an OR item is followed by something other than `|`, that item and
+    /// everything after it is handed to [`Self::parse_and`] — this is what
+    /// gives AND higher precedence than OR. Nested OR nodes are flattened into
+    /// the current sequence.
     fn parse_or(&mut self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
         let mut parts: Vec<OrQuery> = Vec::new();
 
@@ -771,10 +826,11 @@ impl<'a> Parser<'a> {
         Ok(ScoreQuery::Or(parts).simplify_sequence())
     }
 
-    /// Parse the operand of a `!` that has already been consumed.
+    /// Parses the operand of a `!` that has already been consumed.
     ///
-    /// Delegates directly to the atom/group parsers. Double negation (`!(!x)`)
-    /// is flattened to `x`.
+    /// Accepts any single atom or group as the operand — whitespace between `!`
+    /// and its operand is skipped. Double negation (`!(!(x))`) is flattened to
+    /// `x`; `!!x` (adjacent `!` tokens without a group) is an error.
     fn parse_not(&mut self, group_depth: usize) -> Result<ScoreQuery> {
         let expected = ExpectedValue::Title
             .or(ExpectedValue::TagExpression)
@@ -838,7 +894,12 @@ impl<'a> Parser<'a> {
         Ok(ScoreQuery::Not(not_query))
     }
 
-    /// Confirmed a whitespace after a the first toke in [`Self::parse_any`].
+    /// Decides what to do after the first term and a trailing whitespace have
+    /// been parsed by [`Self::parse_any`].
+    ///
+    /// If the next token is `|`, delegates to [`Self::parse_or`]. Otherwise
+    /// delegates to [`Self::parse_and`], which handles both continued AND
+    /// sequences and the case where the whitespace turns out to be trailing.
     fn parse_maybe_sequence(
         &mut self,
         first_query: ScoreQuery,
@@ -875,6 +936,10 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses a single score-mode term: a title, tag, name, group, or `!` NOT.
+    ///
+    /// Does not consume any leading whitespace. Does not look for a following
+    /// operator — that is left to the caller.
     fn parse_single(&mut self, group_depth: usize) -> Result<ScoreQuery> {
         let expected = ExpectedValue::Title
             .or(ExpectedValue::TagExpression)
@@ -916,7 +981,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Default parser when a more specific context doesn't exist.
+    /// Parses a score-mode (sub-)expression in the absence of a more specific
+    /// context.
+    ///
+    /// Skips leading whitespace, parses the first term via [`Self::parse_single`],
+    /// then peeks at the following token. A whitespace hands off to
+    /// [`Self::parse_maybe_sequence`] to resolve AND vs OR; a `)` at non-zero
+    /// depth returns the term as-is for the enclosing group.
     fn parse_any(&mut self, group_depth: usize) -> Result<ScoreQuery> {
         self.skip_whitespace()?;
 

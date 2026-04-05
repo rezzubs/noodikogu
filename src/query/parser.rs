@@ -17,11 +17,9 @@ use lexer::{Lexer, Token, TokenKind};
 /// - `$macro_name!()` — plain unexpected error.
 /// - `$macro_name!($help)` — unexpected error with an attached [`Help`] note.
 ///
-/// The `peek` / `nopeek` suffix controls whether the offending token still
-/// needs to be consumed (`peek`) or has already been consumed (`nopeek`). An
-/// optional `$context` ident adds a [`Context`] to the error.
-macro_rules! build_unexpected {
-    ($macro_name:ident, $self:ident, $token:ident, $expected:ident, peek) => {
+/// This variant is for matches that use `peek`.
+macro_rules! build_unexpected_peek {
+    ($macro_name:ident, $self:ident, $token:ident, $expected:ident) => {
         macro_rules! $macro_name {
             () => {{
                 let $token = $self.next_existing();
@@ -35,7 +33,7 @@ macro_rules! build_unexpected {
             }};
         }
     };
-    ($macro_name:ident, $self:ident, $token:ident, $expected:ident, $context:ident, peek) => {
+    ($macro_name:ident, $self:ident, $token:ident, $expected:ident, $context:ident) => {
         macro_rules! $macro_name {
             () => {{
                 let $token = $self.next_existing();
@@ -50,7 +48,13 @@ macro_rules! build_unexpected {
             }};
         }
     };
-    ($macro_name:ident, $self:ident, $token:ident, $expected:ident, nopeek) => {
+}
+
+/// See [`build_unexpected_peek`]
+///
+/// This variant is for matches that use `next`.
+macro_rules! build_unexpected_next {
+    ($macro_name:ident, $self:ident, $token:ident, $expected:ident) => {
         macro_rules! $macro_name {
             () => {{
                 return Err(Error::unexpected($expected, $token.display($self.input())));
@@ -62,7 +66,7 @@ macro_rules! build_unexpected {
             }};
         }
     };
-    ($macro_name:ident, $self:ident, $token:ident, $expected:ident, $context:ident, nopeek) => {
+    ($macro_name:ident, $self:ident, $token:ident, $expected:ident, $context:ident) => {
         macro_rules! $macro_name {
             () => {{
                 return Err(Error::unexpected($expected, $token.display($self.input()))
@@ -438,7 +442,7 @@ impl<'a> Parser<'a> {
                 expected.into_expected()
             };
 
-            build_unexpected!(unexpected, self, separator, expected, context, peek);
+            build_unexpected_peek!(unexpected, self, separator, expected, context);
 
             match separator.kind {
                 TokenKind::Whitespace => {}
@@ -544,7 +548,7 @@ impl<'a> Parser<'a> {
                     expected.into_expected()
                 };
 
-                build_unexpected!(unexpected1, self, separator, expected, peek);
+                build_unexpected_peek!(unexpected1, self, separator, expected);
 
                 match separator.kind {
                     TokenKind::Whitespace => {}
@@ -587,7 +591,7 @@ impl<'a> Parser<'a> {
                 expected
             };
 
-            build_unexpected!(unexpected2, self, next_token, expected, peek);
+            build_unexpected_peek!(unexpected2, self, next_token, expected);
 
             let item = match next_token.kind {
                 TokenKind::TagPrefix => {
@@ -685,7 +689,7 @@ impl<'a> Parser<'a> {
                     expected_sep.into_expected()
                 };
 
-                build_unexpected!(unexpected_sep, self, whitespace, expected_sep, peek);
+                build_unexpected_peek!(unexpected_sep, self, whitespace, expected_sep);
 
                 match whitespace.kind {
                     TokenKind::Whitespace => {
@@ -754,7 +758,7 @@ impl<'a> Parser<'a> {
             // Both first_run and subsequent runs must consume WS after `|`.
             let expected_ws = ExpectedValue::WhiteSpace;
 
-            build_unexpected!(unexpected_ws, self, ws_tok, expected_ws, peek);
+            build_unexpected_peek!(unexpected_ws, self, ws_tok, expected_ws);
 
             match self.peek()? {
                 None => return Err(Error::unexpected_eof(expected_ws)),
@@ -774,7 +778,7 @@ impl<'a> Parser<'a> {
                 .or(ExpectedValue::Group)
                 .or(DisplayToken::Not);
 
-            build_unexpected!(unexpected_item, self, next_token, expected_item, peek);
+            build_unexpected_peek!(unexpected_item, self, next_token, expected_item);
 
             let item = match next_token.kind {
                 TokenKind::TagPrefix => {
@@ -843,7 +847,7 @@ impl<'a> Parser<'a> {
             return Err(Error::unexpected_eof(expected));
         };
 
-        build_unexpected!(unexpected, self, token, expected, peek);
+        build_unexpected_peek!(unexpected, self, token, expected);
 
         let inner: ScoreQuery = match token.kind {
             TokenKind::Word | TokenKind::QuotedText => {
@@ -949,7 +953,7 @@ impl<'a> Parser<'a> {
             return Err(Error::unexpected_eof(expected));
         };
 
-        build_unexpected!(unexpected, self, token, expected, nopeek);
+        build_unexpected_next!(unexpected, self, token, expected);
 
         match token.kind {
             TokenKind::TagPrefix => self.parse_tag(group_depth),
@@ -1004,7 +1008,7 @@ impl<'a> Parser<'a> {
             expected.into_expected()
         };
 
-        build_unexpected!(unexpected, self, token, expected_second, peek);
+        build_unexpected_peek!(unexpected, self, token, expected_second);
 
         match token.kind {
             TokenKind::Whitespace => {

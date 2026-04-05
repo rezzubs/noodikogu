@@ -1,0 +1,21 @@
+[package]
+name = "noodikogu-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.noodikogu]
+path = ".."
+
+[[bin]]
+name = "query_parser"
+path = "fuzz_targets/query_parser.rs"
+test = false
+doc = false
+bench = false

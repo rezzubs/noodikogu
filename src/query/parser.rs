@@ -245,10 +245,23 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses the section after `@@`.
-    fn parse_name_mode(&mut self) -> Result<Query> {
+    fn parse_name_parts<const NM: bool>(
+        &mut self,
+        group_depth: usize,
+    ) -> Result<Option<Vec<PersonName>>> {
+        let first_expected = ExpectedValue::NameSegment;
+        let first_expected = if NM {
+            first_expected.or(ExpectedValue::Eof)
+        } else {
+            first_expected.into_expected()
+        };
+
         let Some(first) = self.next()? else {
-            return Ok(Query::Person(None));
+            if NM {
+                return Ok(None);
+            } else {
+                return Err(Error::unexpected_eof(first_expected));
+            }
         };
 
         let first_name = match first.kind {
@@ -266,39 +279,93 @@ impl<'a> Parser<'a> {
             TokenKind::Whitespace => {
                 self.expect_eof().add_help(Help::NameModeSingleComponent)?;
 
-                return Ok(Query::Person(None));
+                if NM {
+                    return Ok(None);
+                } else {
+                    return Err(Error::unexpected(
+                        first_expected,
+                        first.display(self.input()),
+                    ));
+                }
             }
-            _ => {
+            TokenKind::TagPrefix
+            | TokenKind::TagModePrefix
+            | TokenKind::TagValueSeparator
+            | TokenKind::NamePrefix
+            | TokenKind::NameModePrefix
+            | TokenKind::GroupStart
+            | TokenKind::GroupEnd
+            | TokenKind::Or
+            | TokenKind::Not
+            | TokenKind::NameSeparator
+            | TokenKind::QuotedText => {
                 return Err(Error::unexpected(
-                    ExpectedValue::NameSegment.or(ExpectedValue::Eof),
+                    first_expected,
                     first.display(self.input()),
                 ));
             }
         };
 
+        let expected_sep = DisplayToken::NameSeparator.or(ExpectedValue::WhiteSpace);
+        let expected_sep = if !NM && group_depth > 0 {
+            expected_sep.or(DisplayToken::GroupEnd)
+        } else {
+            expected_sep.into_expected()
+        };
+
         let mut names = Vec::from([first_name]);
-        while let Some(separator) = self.next()? {
+        while let Some(separator) = self.peek()? {
             match separator.kind {
-                TokenKind::NameSeparator => {}
+                TokenKind::NameSeparator => {
+                    self.advance()?;
+                }
                 TokenKind::Whitespace => break,
                 TokenKind::Word => {
                     unreachable!("The lexer should not return two words in sequence")
                 }
-                _ => {
+
+                TokenKind::GroupEnd if !NM && group_depth > 0 => break,
+
+                TokenKind::TagPrefix
+                | TokenKind::TagModePrefix
+                | TokenKind::TagValueSeparator
+                | TokenKind::NamePrefix
+                | TokenKind::NameModePrefix
+                | TokenKind::GroupStart
+                | TokenKind::GroupEnd
+                | TokenKind::Or
+                | TokenKind::Not
+                | TokenKind::QuotedText => {
+                    let separator = self.next_existing();
                     return Err(Error::unexpected(
-                        DisplayToken::NameSeparator.or(ExpectedValue::WhiteSpace),
+                        expected_sep,
                         separator.display(self.input()),
                     ));
                 }
             }
 
             // Dot without a following word can be ignored
-            let Some(next_word) = self.next()? else { break };
+            let Some(next_word) = self.peek()? else { break };
 
             let name = match next_word.kind {
-                TokenKind::Word => next_word.content(self.input()),
+                TokenKind::Word => {
+                    let next_word = self.next_existing();
+                    next_word.content(self.input())
+                }
                 TokenKind::Whitespace => break,
-                _ => {
+                TokenKind::GroupEnd if !NM && group_depth > 0 => break,
+                TokenKind::TagPrefix
+                | TokenKind::TagModePrefix
+                | TokenKind::TagValueSeparator
+                | TokenKind::NamePrefix
+                | TokenKind::NameModePrefix
+                | TokenKind::GroupStart
+                | TokenKind::GroupEnd
+                | TokenKind::Or
+                | TokenKind::Not
+                | TokenKind::NameSeparator
+                | TokenKind::QuotedText => {
+                    let next_word = self.next_existing();
                     return Err(Error::unexpected(
                         ExpectedValue::NameSegment.or(ExpectedValue::WhiteSpace),
                         next_word.display(self.input()),
@@ -313,6 +380,15 @@ impl<'a> Parser<'a> {
 
             names.push(name);
         }
+
+        Ok(Some(names))
+    }
+
+    /// Parses the section after `@@`.
+    fn parse_name_mode(&mut self) -> Result<Query> {
+        let Some(names) = self.parse_name_parts::<true>(0)? else {
+            return Ok(Query::Person(None));
+        };
 
         self.skip_whitespace()?;
 
@@ -497,9 +573,17 @@ impl<'a> Parser<'a> {
     /// Parses a person name expression (`@Name1.Name2`) after the `@` has been
     /// consumed.
     fn parse_name(&mut self, group_depth: usize) -> Result<SearchAtom> {
-        _ = group_depth;
-        // TODO: fill in name parsing
-        Err(Error::empty())
+        let Some(parts) = self.parse_name_parts::<false>(group_depth)? else {
+            unreachable!("return value should not be none if NM=false");
+        };
+
+        Ok(SearchAtom::Person(Person::new(parts).unwrap_or_else(
+            |err| match err {
+                PersonError::Empty => {
+                    unreachable!("parse_name_parts checks that there is at least one")
+                }
+            },
+        )))
     }
 
     /// Parses the contents of a group after the opening `(` has been consumed.

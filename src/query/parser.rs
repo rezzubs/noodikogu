@@ -347,7 +347,13 @@ impl<'a> Parser<'a> {
                 self.parse_name_mode()
             }
             TokenKind::Whitespace => unreachable!("whitespace was already skipped"),
-            _ => self.parse_any(0).map(Query::Score),
+            _ => {
+                if let Some(score) = self.parse_any(0)? {
+                    Ok(Query::Score(score))
+                } else {
+                    Err(Error::empty())
+                }
+            }
         }
     }
 
@@ -503,6 +509,8 @@ impl<'a> Parser<'a> {
     /// groups regardless of whether the closing `)` is present — an unclosed
     /// group is accepted and its content is returned as-is.
     fn parse_group(&mut self, group_depth: usize) -> Result<Option<ScoreQuery>> {
+        self.skip_whitespace()?;
+
         let Some(peeked) = self.peek()? else {
             // expecting that unclosed groups will close at EOF.
             return Ok(None);
@@ -513,16 +521,23 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
 
-        let query = self.parse_any(group_depth + 1)?;
+        // Handle a nested group immediately after this one.
+        let query = if peeked.kind == TokenKind::GroupStart {
+            self.advance()?;
+            let first = self.parse_group(group_depth + 1)?;
+            self.parse_any_after_first(first, group_depth + 1)?
+        } else {
+            self.parse_any(group_depth + 1)?
+        };
 
         self.skip_whitespace()?;
         let Some(next) = self.next()? else {
             // expecting that unclosed groups will close at EOF.
-            return Ok(Some(query));
+            return Ok(query);
         };
 
         match next.kind {
-            TokenKind::GroupEnd => {}
+            TokenKind::GroupEnd => Ok(query),
 
             TokenKind::Whitespace => unreachable!("skipped whitespace above"),
             TokenKind::TagPrefix
@@ -542,8 +557,6 @@ impl<'a> Parser<'a> {
                 );
             }
         }
-
-        Ok(Some(query))
     }
 
     /// Parses a title search term starting from `first`, greedily joining
@@ -653,14 +666,20 @@ impl<'a> Parser<'a> {
     /// nested AND nodes into a single [`ScoreQuery::And`]. If a `|` is
     /// encountered, hands off to [`Self::parse_or`] with the AND so far as the
     /// left-hand side.
-    fn parse_and(&mut self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
+    fn parse_and(
+        &mut self,
+        first_query: Option<ScoreQuery>,
+        group_depth: usize,
+    ) -> Result<Option<ScoreQuery>> {
         let mut parts = Vec::new();
 
-        match first_query {
-            ScoreQuery::Atom(search_atom) => parts.push(AndQuery::Atom(search_atom)),
-            ScoreQuery::And(items) => parts.extend(items),
-            ScoreQuery::Or(items) => parts.push(AndQuery::Or(items)),
-            ScoreQuery::Not(not_query) => parts.push(AndQuery::Not(not_query)),
+        if let Some(first_query) = first_query {
+            match first_query {
+                ScoreQuery::Atom(search_atom) => parts.push(AndQuery::Atom(search_atom)),
+                ScoreQuery::And(items) => parts.extend(items),
+                ScoreQuery::Or(items) => parts.push(AndQuery::Or(items)),
+                ScoreQuery::Not(not_query) => parts.push(AndQuery::Not(not_query)),
+            }
         }
 
         let mut first_run = true;
@@ -679,7 +698,7 @@ impl<'a> Parser<'a> {
                     expected.into_expected()
                 };
 
-                build_unexpected_peek!(unexpected1, self, separator, expected);
+                build_unexpected_peek!(unexpected, self, separator, expected);
 
                 match separator.kind {
                     TokenKind::Whitespace => {}
@@ -687,20 +706,20 @@ impl<'a> Parser<'a> {
                         break;
                     }
 
-                    TokenKind::TagPrefix => unexpected1!(Help::SpaceBeforeTag),
-                    TokenKind::GroupStart => unexpected1!(Help::SpaceBeforeGroup),
-                    TokenKind::NamePrefix => unexpected1!(Help::SpaceBeforeName),
-                    TokenKind::QuotedText => unexpected1!(Help::SpaceBeforeQuote),
-                    TokenKind::Word => unexpected1!(Help::SpaceBeforeWord),
-                    TokenKind::Or => unexpected1!(Help::SpaceBeforeOr),
-                    TokenKind::Not => unexpected1!(Help::SpaceBeforeNot),
+                    TokenKind::TagPrefix => unexpected!(Help::SpaceBeforeTag),
+                    TokenKind::GroupStart => unexpected!(Help::SpaceBeforeGroup),
+                    TokenKind::NamePrefix => unexpected!(Help::SpaceBeforeName),
+                    TokenKind::QuotedText => unexpected!(Help::SpaceBeforeQuote),
+                    TokenKind::Word => unexpected!(Help::SpaceBeforeWord),
+                    TokenKind::Or => unexpected!(Help::SpaceBeforeOr),
+                    TokenKind::Not => unexpected!(Help::SpaceBeforeNot),
 
                     TokenKind::TagValueSeparator
                     | TokenKind::GroupEnd
-                    | TokenKind::NameSeparator => unexpected1!(),
+                    | TokenKind::NameSeparator => unexpected!(),
 
-                    TokenKind::NameModePrefix => unexpected1!(Help::NameModeAtStart),
-                    TokenKind::TagModePrefix => unexpected1!(Help::TagModeAtStart),
+                    TokenKind::NameModePrefix => unexpected!(Help::NameModeAtStart),
+                    TokenKind::TagModePrefix => unexpected!(Help::TagModeAtStart),
                 }
 
                 self.advance()?;
@@ -710,65 +729,35 @@ impl<'a> Parser<'a> {
                 break;
             };
 
-            let expected = ExpectedValue::TagExpression
-                .or(ExpectedValue::NameExpression)
-                .or(ExpectedValue::Group)
-                .or(DisplayToken::Not)
-                .or(DisplayToken::Or);
-
-            let expected = if group_depth > 0 {
-                expected.or(ExpectedValue::Group)
-            } else {
-                expected
-            };
-
-            build_unexpected_peek!(unexpected2, self, next_token, expected);
-
             let item = match next_token.kind {
-                TokenKind::TagPrefix => {
-                    self.advance()?;
-                    self.parse_tag(group_depth)?
-                }
-                TokenKind::GroupStart => {
-                    self.advance()?;
-                    let Some(group) = self.parse_group(group_depth)? else {
-                        // The group is empty, skip it and any whitespace after it.
-                        self.skip_whitespace()?;
-                        continue;
-                    };
-                    group
-                }
-                TokenKind::NamePrefix => {
-                    self.advance()?;
-                    self.parse_name(group_depth).map(ScoreQuery::Atom)?
-                }
-                TokenKind::Not => {
-                    self.advance()?;
-                    self.parse_not(group_depth)?
-                }
                 TokenKind::Or => {
                     self.advance()?;
                     let query_so_far = ScoreQuery::And(parts).simplify_sequence();
 
                     return self.parse_or(query_so_far, group_depth);
                 }
-                TokenKind::QuotedText | TokenKind::Word => {
-                    let next_token = self.next_existing();
-
-                    self.parse_title(next_token, group_depth)
-                        .map(ScoreQuery::Atom)?
-                }
 
                 TokenKind::GroupEnd if group_depth > 0 => break,
 
-                TokenKind::TagValueSeparator | TokenKind::NameSeparator | TokenKind::GroupEnd => {
-                    unexpected2!()
-                }
-
                 TokenKind::Whitespace => unreachable!("the previous token was whitespace"),
 
-                TokenKind::TagModePrefix => unexpected2!(Help::TagModeAtStart),
-                TokenKind::NameModePrefix => unexpected2!(Help::NameModeAtStart),
+                TokenKind::TagPrefix
+                | TokenKind::GroupStart
+                | TokenKind::NamePrefix
+                | TokenKind::Not
+                | TokenKind::QuotedText
+                | TokenKind::Word
+                | TokenKind::TagValueSeparator
+                | TokenKind::NameSeparator
+                | TokenKind::TagModePrefix
+                | TokenKind::GroupEnd
+                | TokenKind::NameModePrefix => {
+                    let Some(query) = self.parse_single(group_depth)? else {
+                        first_run = false;
+                        continue;
+                    };
+                    query
+                }
             };
 
             match item {
@@ -792,20 +781,27 @@ impl<'a> Parser<'a> {
     /// everything after it is handed to [`Self::parse_and`] — this is what
     /// gives AND higher precedence than OR. Nested OR nodes are flattened into
     /// the current sequence.
-    fn parse_or(&mut self, first_query: ScoreQuery, group_depth: usize) -> Result<ScoreQuery> {
+    fn parse_or(
+        &mut self,
+        first_query: Option<ScoreQuery>,
+        group_depth: usize,
+    ) -> Result<Option<ScoreQuery>> {
         let mut parts: Vec<OrQuery> = Vec::new();
 
-        match first_query {
-            ScoreQuery::Atom(a) => parts.push(OrQuery::Atom(a)),
-            ScoreQuery::And(items) => parts.push(OrQuery::And(items)),
-            ScoreQuery::Or(items) => parts.extend(items),
-            ScoreQuery::Not(not) => parts.push(OrQuery::Not(not)),
+        if let Some(first_query) = first_query {
+            extend_or_parts(&mut parts, first_query);
         }
 
         // `|` was already consumed by the caller. first_run consumes the
         // required space after it; subsequent runs look for the full ` | `
         // separator and also consume the space that follows.
         let mut first_run = true;
+
+        // Keep track of the previously inserted value to use as an input for
+        // AND (which binds stronger). None parts are not inserted but and needs
+        // to know if the previous part was None.
+        let mut prev_was_none = true;
+
         loop {
             if !first_run {
                 // The separator between OR items is (WS + `|` + WS).
@@ -830,7 +826,9 @@ impl<'a> Parser<'a> {
 
                         match after_whitespace.kind {
                             // Only a ` | ` continues the OR sequence.
-                            TokenKind::Or => {}
+                            TokenKind::Or => {
+                                self.advance2()?; // consume WS + `|`
+                            }
 
                             // Anything that is not `|` should mean the starting
                             // of an AND sequence (which binds stronger). The
@@ -849,22 +847,24 @@ impl<'a> Parser<'a> {
                                 // skip the whitespace
                                 self.advance()?;
 
-                                let and_lhs = parts.pop().expect("This is the second run and there is already one item at the start of the first").to_score();
-                                let and_result = self.parse_and(and_lhs, group_depth)?;
+                                let and_lhs = if prev_was_none {
+                                    None
+                                } else {
+                                    Some(parts.pop().expect("This is the second run and there is already one item at the start of the first").to_score())
+                                };
 
-                                match and_result {
-                                    ScoreQuery::Atom(atom) => parts.push(OrQuery::Atom(atom)),
-                                    ScoreQuery::And(and) => parts.push(OrQuery::And(and)),
-                                    ScoreQuery::Or(or) => parts.extend(or),
-                                    ScoreQuery::Not(not) => parts.push(OrQuery::Not(not)),
-                                }
+                                if let Some(and_result) = self.parse_and(and_lhs, group_depth)? {
+                                    prev_was_none = false;
+                                    extend_or_parts(&mut parts, and_result);
+                                } else {
+                                    prev_was_none = true;
+                                };
 
                                 continue;
                             }
 
                             TokenKind::Whitespace => unreachable!("previous element is whitespace"),
                         }
-                        self.advance2()?; // consume WS + `|`
                     }
 
                     TokenKind::GroupEnd if group_depth > 0 => break,
@@ -912,30 +912,12 @@ impl<'a> Parser<'a> {
             build_unexpected_peek!(unexpected_item, self, next_token, expected_item);
 
             let item = match next_token.kind {
-                TokenKind::TagPrefix => {
-                    self.advance()?;
-                    self.parse_tag(group_depth)?
-                }
-                TokenKind::GroupStart => {
-                    self.advance()?;
-                    let Some(group) = self.parse_group(group_depth)? else {
-                        continue;
-                    };
-                    group
-                }
-                TokenKind::NamePrefix => {
-                    self.advance()?;
-                    self.parse_name(group_depth).map(ScoreQuery::Atom)?
-                }
-                TokenKind::Not => {
-                    self.advance()?;
-                    self.parse_not(group_depth)?
-                }
-                TokenKind::QuotedText | TokenKind::Word => {
-                    let next_token = self.next_existing();
-                    self.parse_title(next_token, group_depth)
-                        .map(ScoreQuery::Atom)?
-                }
+                TokenKind::TagPrefix
+                | TokenKind::GroupStart
+                | TokenKind::NamePrefix
+                | TokenKind::Not
+                | TokenKind::QuotedText
+                | TokenKind::Word => self.parse_single(group_depth)?,
 
                 TokenKind::Or | TokenKind::TagValueSeparator | TokenKind::NameSeparator => {
                     unexpected_item!()
@@ -948,11 +930,11 @@ impl<'a> Parser<'a> {
                 TokenKind::NameModePrefix => unexpected_item!(Help::NameModeAtStart),
             };
 
-            match item {
-                ScoreQuery::Atom(a) => parts.push(OrQuery::Atom(a)),
-                ScoreQuery::And(and) => parts.push(OrQuery::And(and)),
-                ScoreQuery::Or(or) => parts.extend(or),
-                ScoreQuery::Not(not) => parts.push(OrQuery::Not(not)),
+            if let Some(item) = item {
+                prev_was_none = false;
+                extend_or_parts(&mut parts, item);
+            } else {
+                prev_was_none = true
             }
 
             first_run = false;
@@ -965,8 +947,9 @@ impl<'a> Parser<'a> {
     ///
     /// Accepts any single atom or group as the operand — whitespace between `!`
     /// and its operand is skipped. Double negation (`!(!(x))`) is flattened to
-    /// `x`; `!!x` (adjacent `!` tokens without a group) is an error.
-    fn parse_not(&mut self, group_depth: usize) -> Result<ScoreQuery> {
+    /// `x`; `!!x` (adjacent `!` tokens without a group) is an error. `!()` and
+    /// deeper empty group nestings return `Ok(None)`
+    fn parse_not(&mut self, group_depth: usize) -> Result<Option<ScoreQuery>> {
         self.skip_whitespace()?;
 
         let expected = ExpectedValue::Title
@@ -993,7 +976,7 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 match self.parse_group(group_depth)? {
                     Some(q) => q,
-                    None => return self.parse_not(group_depth),
+                    None => return Ok(None),
                 }
             }
             TokenKind::NamePrefix => {
@@ -1020,13 +1003,13 @@ impl<'a> Parser<'a> {
             ScoreQuery::Or(items) => NotQuery::Or(items),
             // flatten the nested not
             ScoreQuery::Not(not) => match not {
-                NotQuery::Atom(atom) => return Ok(ScoreQuery::Atom(atom)),
-                NotQuery::And(and) => return Ok(ScoreQuery::And(and)),
-                NotQuery::Or(or) => return Ok(ScoreQuery::Or(or)),
+                NotQuery::Atom(atom) => return Ok(Some(ScoreQuery::Atom(atom))),
+                NotQuery::And(and) => return Ok(Some(ScoreQuery::And(and))),
+                NotQuery::Or(or) => return Ok(Some(ScoreQuery::Or(or))),
             },
         };
 
-        Ok(ScoreQuery::Not(not_query))
+        Ok(Some(ScoreQuery::Not(not_query)))
     }
 
     /// Decides what to do after the first term and a trailing whitespace have
@@ -1037,9 +1020,9 @@ impl<'a> Parser<'a> {
     /// sequences and the case where the whitespace turns out to be trailing.
     fn parse_maybe_sequence(
         &mut self,
-        first_query: ScoreQuery,
+        first_query: Option<ScoreQuery>,
         group_depth: usize,
-    ) -> Result<ScoreQuery> {
+    ) -> Result<Option<ScoreQuery>> {
         _ = first_query;
         _ = group_depth;
 
@@ -1075,8 +1058,9 @@ impl<'a> Parser<'a> {
     ///
     /// Does not consume any leading whitespace. Does not look for a following
     /// operator — that is left to the caller.
-    fn parse_single(&mut self, group_depth: usize) -> Result<ScoreQuery> {
+    fn parse_single(&mut self, group_depth: usize) -> Result<Option<ScoreQuery>> {
         let expected = ExpectedValue::Title
+            .or(ExpectedValue::NameExpression)
             .or(ExpectedValue::TagExpression)
             .or(ExpectedValue::Group);
 
@@ -1087,17 +1071,13 @@ impl<'a> Parser<'a> {
         build_unexpected_next!(unexpected, self, token, expected);
 
         match token.kind {
-            TokenKind::TagPrefix => self.parse_tag(group_depth),
-            TokenKind::NamePrefix => self.parse_name(group_depth).map(ScoreQuery::Atom),
-            TokenKind::GroupStart => {
-                let Some(group) = self.parse_group(group_depth)? else {
-                    return self.parse_any(group_depth);
-                };
-                Ok(group)
-            }
-            TokenKind::Word | TokenKind::QuotedText => {
-                self.parse_title(token, group_depth).map(ScoreQuery::Atom)
-            }
+            TokenKind::TagPrefix => self.parse_tag(group_depth).map(Some),
+            TokenKind::NamePrefix => self.parse_name(group_depth).map(ScoreQuery::Atom).map(Some),
+            TokenKind::GroupStart => self.parse_group(group_depth),
+            TokenKind::Word | TokenKind::QuotedText => self
+                .parse_title(token, group_depth)
+                .map(ScoreQuery::Atom)
+                .map(Some),
             TokenKind::Not => self.parse_not(group_depth),
 
             TokenKind::Whitespace => unreachable!("we skipped whitespace"),
@@ -1116,18 +1096,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses a score-mode (sub-)expression in the absence of a more specific
-    /// context.
-    ///
-    /// Skips leading whitespace, parses the first term via [`Self::parse_single`],
-    /// then peeks at the following token. A whitespace hands off to
-    /// [`Self::parse_maybe_sequence`] to resolve AND vs OR; a `)` at non-zero
-    /// depth returns the term as-is for the enclosing group.
-    fn parse_any(&mut self, group_depth: usize) -> Result<ScoreQuery> {
-        self.skip_whitespace()?;
-
-        let first_query = self.parse_single(group_depth)?;
-
+    fn parse_any_after_first(
+        &mut self,
+        first_query: Option<ScoreQuery>,
+        group_depth: usize,
+    ) -> Result<Option<ScoreQuery>> {
         let Some(token) = self.peek()? else {
             return Ok(first_query);
         };
@@ -1166,15 +1139,34 @@ impl<'a> Parser<'a> {
             TokenKind::NameModePrefix => unexpected!(Help::NameModeAtStart),
         }
     }
+
+    /// Parses a score-mode (sub-)expression in the absence of a more specific
+    /// context.
+    ///
+    /// Skips leading whitespace, parses the first term via [`Self::parse_single`],
+    /// then peeks at the following token. A whitespace hands off to
+    /// [`Self::parse_maybe_sequence`] to resolve AND vs OR; a `)` at non-zero
+    /// depth returns the term as-is for the enclosing group.
+    fn parse_any(&mut self, group_depth: usize) -> Result<Option<ScoreQuery>> {
+        self.skip_whitespace()?;
+
+        let first_query = self.parse_single(group_depth)?;
+        self.parse_any_after_first(first_query, group_depth)
+    }
+}
+
+fn extend_or_parts(parts: &mut Vec<OrQuery>, query: ScoreQuery) {
+    match query {
+        ScoreQuery::Atom(a) => parts.push(OrQuery::Atom(a)),
+        ScoreQuery::And(items) => parts.push(OrQuery::And(items)),
+        ScoreQuery::Or(items) => parts.extend(items),
+        ScoreQuery::Not(not) => parts.push(OrQuery::Not(not)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::query::{
-        AndQuery, NotQuery, OrQuery, Person, PersonName, Query, ScoreQuery, SearchAtom, TagItem,
-    };
-
-    use super::{ErrorKind, Help, Result};
+    use super::*;
 
     fn parse(input: &str) -> Result<Query> {
         Query::parse(input, input.len())
@@ -1784,14 +1776,32 @@ mod tests {
 
     #[test]
     fn empty_group_skipped_in_and_sequence() {
-        // (a) () (b) — the empty group should be ignored, giving And(a, b)
         assert_eq!(
-            parse("(a) () (b)"),
+            parse("a () b"),
             Ok(score(ScoreQuery::And(vec![
                 AndQuery::Atom(t("a")),
                 AndQuery::Atom(t("b")),
             ]))),
         );
+
+        assert_eq!(
+            parse("a | () | b"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn empty_group_triggers_and_in_or() {
+        assert_eq!(
+            parse("a | () b"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+            ])))
+        )
     }
 
     #[test]
@@ -1828,5 +1838,182 @@ mod tests {
     fn name_mode_mid_query_is_error() {
         let err = parse("hello @@world").unwrap_err();
         assert!(err.help.contains(&Help::NameModeAtStart));
+    }
+
+    #[test]
+    fn empty_group_with_spaces() {
+        let r = parse("( )");
+        assert!(
+            matches!(
+                r,
+                Err(Error {
+                    kind: ErrorKind::Empty,
+                    ..
+                }),
+            ),
+            "{:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn nested_empty_group() {
+        let r = parse("(((())))");
+        assert!(
+            matches!(
+                r,
+                Err(Error {
+                    kind: ErrorKind::Empty,
+                    ..
+                }),
+            ),
+            "{:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn double_nested_empty_group_is_error() {
+        let r = parse("(())");
+        assert!(
+            matches!(
+                r,
+                Err(Error {
+                    kind: ErrorKind::Empty,
+                    ..
+                })
+            ),
+            "{:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn not_of_nested_empty_group_is_error() {
+        let result = parse("!(())");
+        assert_eq!(result, Err(Error::empty()), "{:?}", result);
+    }
+
+    #[test]
+    fn nested_empty_group_before_word() {
+        assert_eq!(parse("(()) foo"), Ok(score(atom("foo"))));
+    }
+
+    #[test]
+    fn nested_empty_group_after_word() {
+        assert_eq!(parse("foo (())"), Ok(score(atom("foo"))));
+    }
+
+    #[test]
+    fn nested_empty_group_between_words() {
+        assert_eq!(
+            parse("foo (()) bar"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("foo")),
+                AndQuery::Atom(t("bar")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn multiple_nested_empty_groups_interspersed() {
+        assert_eq!(
+            parse("(()) foo (()) bar"),
+            Ok(score(ScoreQuery::And(vec![
+                AndQuery::Atom(t("foo")),
+                AndQuery::Atom(t("bar")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn consecutive_nested_empty_groups_before_word() {
+        assert_eq!(parse("(() ()) foo"), Ok(score(atom("foo"))));
+        let result = parse("(()()) foo");
+        assert!(result.is_err(), "{:?}", result);
+    }
+
+    #[test]
+    fn leading_nested_empty_inside_group() {
+        assert_eq!(parse("(() foo)"), Ok(score(atom("foo"))));
+    }
+
+    #[test]
+    fn trailing_nested_empty_inside_group() {
+        assert_eq!(parse("(foo ())"), Ok(score(atom("foo"))));
+    }
+
+    #[test]
+    fn deeply_nested_empty_then_content_in_group() {
+        // ((()) foo) — double-nested empty then content inside outer group
+        assert_eq!(parse("((()) foo)"), Ok(score(atom("foo"))));
+    }
+
+    #[test]
+    fn nested_empty_then_or_inside_group() {
+        assert_eq!(
+            parse("(() foo | bar)"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("foo")),
+                OrQuery::Atom(t("bar")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn nested_empty_then_and_inside_group() {
+        assert_eq!(parse("(() foo bar)"), Ok(score(atom("foo bar"))),);
+    }
+
+    #[test]
+    fn not_of_nested_empty_group_is_ignored() {
+        // !(()) foo — NOT binds to the empty group and is discarded; `foo` is a plain atom
+        assert_eq!(parse("!(()) foo"), Ok(score(ScoreQuery::Atom(t("foo")))),);
+    }
+
+    #[test]
+    fn nested_empty_group_before_tag() {
+        assert_eq!(
+            parse("(()) #genre"),
+            Ok(score(ScoreQuery::Atom(SearchAtom::Tag(Tag {
+                name: titem("genre"),
+                value: None,
+            })))),
+        );
+    }
+
+    #[test]
+    fn nested_empty_group_before_tag_with_value() {
+        assert_eq!(
+            parse("(()) #genre:classical"),
+            Ok(score(ScoreQuery::Atom(SearchAtom::Tag(Tag {
+                name: titem("genre"),
+                value: Some(titem("classical")),
+            })))),
+        );
+    }
+
+    #[test]
+    fn nested_empty_and_real_group_in_and() {
+        // ((foo)) (()) — non-empty nested group then nested empty group
+        assert_eq!(parse("((foo)) (())"), Ok(score(atom("foo"))));
+    }
+
+    #[test]
+    fn nested_empty_group_in_or_sequence() {
+        // a | (()) | b — empty nested group between OR terms is discarded
+        // (()) reduces to nothing, so parse_or sees `b` as the next term after the space
+        assert_eq!(
+            parse("a | (()) b"),
+            Ok(score(ScoreQuery::Or(vec![
+                OrQuery::Atom(t("a")),
+                OrQuery::Atom(t("b")),
+            ]))),
+        );
+    }
+
+    #[test]
+    fn nested_empty_not_groups() {
+        assert_eq!(parse("(!()) foo"), Ok(score(ScoreQuery::Atom(t("foo")))))
     }
 }

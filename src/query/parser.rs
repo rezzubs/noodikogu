@@ -352,7 +352,51 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tag_value(&mut self, tag_name: TagItem, group_depth: usize) -> Result<ScoreQuery> {
-        todo!()
+        let expected = ExpectedValue::TagValueExpression;
+        let value = self
+            .peek()?
+            .ok_or(Error::unexpected_eof(expected.clone()).add_help(Help::AddTagValue))?;
+
+        build_unexpected_peek!(unexpected_val, self, value, expected);
+
+        match value.kind {
+            TokenKind::Word => {
+                let value = self.next_existing();
+                let value_str = value.content(self.input());
+                let value_item = TagItem::parse(value_str).map_err(|err| match err {
+                    TagItemError::Empty => {
+                        unreachable!("The lexer should not produce empty word tokens")
+                    }
+                    TagItemError::InvalidChar(invalid) => Error::new(ErrorKind::InvalidTagValue {
+                        invalid,
+                        name: value_str.into(),
+                    }),
+                })?;
+
+                Ok(ScoreQuery::Atom(SearchAtom::Tag(Tag {
+                    name: tag_name,
+                    value: Some(value_item),
+                })))
+            }
+            TokenKind::QuotedText => Err(Error::new(ErrorKind::QuotedTagValue)),
+
+            // TODO: tag value expressions
+            TokenKind::GroupStart | TokenKind::Not => {
+                _ = group_depth;
+                unexpected_val!()
+            }
+
+            TokenKind::Whitespace
+            | TokenKind::TagPrefix
+            | TokenKind::TagValueSeparator
+            | TokenKind::NamePrefix
+            | TokenKind::GroupEnd
+            | TokenKind::Or
+            | TokenKind::NameSeparator => unexpected_val!(),
+
+            TokenKind::TagModePrefix => unexpected_val!(Help::TagModeAtStart),
+            TokenKind::NameModePrefix => unexpected_val!(Help::NameModeAtStart),
+        }
     }
 
     /// Parses a tag expression (`#name` or `#name:value`) after the `#` has

@@ -103,6 +103,10 @@ pub enum ErrorKind {
         invalid: char,
         name: String,
     },
+    InvalidTagValue {
+        invalid: char,
+        name: String,
+    },
     InvalidPersonName {
         invalid: char,
         name: String,
@@ -111,6 +115,7 @@ pub enum ErrorKind {
     EmptyQuotedString,
     Empty,
     QuotedTagName,
+    QuotedTagValue,
 }
 
 impl Display for ErrorKind {
@@ -127,16 +132,23 @@ impl Display for ErrorKind {
             ErrorKind::InvalidTagName { invalid, name } => {
                 write!(
                     f,
-                    "tag name `{name}` contains an invalid character: `{invalid}`"
+                    "the tag name `{name}` contains an invalid character: `{invalid}`"
+                )
+            }
+            ErrorKind::InvalidTagValue { invalid, name } => {
+                write!(
+                    f,
+                    "the tag value `{name}` contains an invalid character: `{invalid}`"
                 )
             }
             ErrorKind::InvalidPersonName { invalid, name } => {
                 write!(
                     f,
-                    "person name `{name}` contains an invalid character: `{invalid}`"
+                    "the person name `{name}` contains an invalid character: `{invalid}`"
                 )
             }
             ErrorKind::QuotedTagName => write!(f, "tag names should not be quoted"),
+            ErrorKind::QuotedTagValue => write!(f, "tag values should not be quoted"),
         }
     }
 }
@@ -168,6 +180,7 @@ pub enum Help {
     QuotedTagName,
     AddTagNameBeforeValue,
     ForgottenValueSep,
+    AddTagValue,
 }
 
 impl Display for Help {
@@ -205,6 +218,7 @@ impl Display for Help {
             Help::ForgottenValueSep => {
                 write!(f, "You may have forgotten the value separator (`:`)")
             }
+            Help::AddTagValue => write!(f, "Add a value for the tag"),
         }
     }
 }

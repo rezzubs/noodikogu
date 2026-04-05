@@ -102,6 +102,8 @@ pub enum ExpectedValue {
     Eof,
     /// A tag name.
     TagName,
+    /// A tag value.
+    TagValueExpression,
     /// A single name of a person
     NameSegment,
     /// Any whitespace
@@ -145,6 +147,7 @@ impl Display for ExpectedValue {
             ExpectedValue::Group => write!(f, "a group (`()`)"),
             ExpectedValue::Title => write!(f, "a score title"),
             ExpectedValue::NameExpression => write!(f, "a name expression"),
+            ExpectedValue::TagValueExpression => write!(f, "a tag value expression"),
         }
     }
 }

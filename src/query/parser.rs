@@ -832,6 +832,8 @@ impl<'a> Parser<'a> {
     /// and its operand is skipped. Double negation (`!(!(x))`) is flattened to
     /// `x`; `!!x` (adjacent `!` tokens without a group) is an error.
     fn parse_not(&mut self, group_depth: usize) -> Result<ScoreQuery> {
+        self.skip_whitespace()?;
+
         let expected = ExpectedValue::Title
             .or(ExpectedValue::TagExpression)
             .or(ExpectedValue::NameExpression)
@@ -867,9 +869,7 @@ impl<'a> Parser<'a> {
                 unexpected!(Help::DoubleNegation)
             }
 
-            TokenKind::Whitespace => {
-                unreachable!("`!` is immediately followed by its operand")
-            }
+            TokenKind::Whitespace => unreachable!("Whitespace has been skipped"),
 
             TokenKind::Or
             | TokenKind::GroupEnd
@@ -1534,6 +1534,14 @@ mod tests {
                 AndQuery::Or(vec![OrQuery::Atom(t("c")), OrQuery::Atom(t("d"))]),
             ]))),
         );
+    }
+
+    #[test]
+    fn not_strips_following_whitespace() {
+        assert_eq!(
+            parse("!  test"),
+            Ok(score(ScoreQuery::Not(NotQuery::Atom(t("test")))))
+        )
     }
 
     #[test]

@@ -4,6 +4,7 @@ use super::lexer::LexError;
 use crate::query::parser::DisplayToken;
 pub use expected::{Expected, ExpectedValue, IntoExpected, IntoExpectedValue};
 use std::fmt::Display;
+use std::ops::Range;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -12,6 +13,8 @@ pub struct Error {
     pub help: Vec<Help>,
     pub context: Option<Context>,
     pub kind: ErrorKind,
+    /// The byte range in the input string that caused this error, if known.
+    pub span: Option<Range<usize>>,
 }
 
 impl Error {
@@ -20,6 +23,7 @@ impl Error {
             help: Vec::new(),
             context: None,
             kind,
+            span: None,
         }
     }
 
@@ -33,8 +37,14 @@ impl Error {
         self
     }
 
+    /// Attaches a source span to this error.
+    pub fn with_span(mut self, span: Range<usize>) -> Self {
+        self.span = Some(span);
+        self
+    }
+
     pub(crate) fn empty() -> Self {
-        Self::new(ErrorKind::Empty)
+        Self::new(ErrorKind::Empty).with_span(0..0)
     }
 
     pub(crate) fn unexpected(expected: impl IntoExpected, found: DisplayToken) -> Self {
@@ -68,7 +78,9 @@ impl Error {
 impl From<LexError> for Error {
     fn from(e: LexError) -> Self {
         match e {
-            LexError::EmptyQuotedString { .. } => Error::new(ErrorKind::EmptyQuotedString),
+            LexError::EmptyQuotedString { span } => {
+                Error::new(ErrorKind::EmptyQuotedString).with_span(span)
+            }
         }
     }
 }

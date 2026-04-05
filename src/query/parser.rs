@@ -23,13 +23,14 @@ macro_rules! build_unexpected_peek {
         macro_rules! $macro_name {
             () => {{
                 let $token = $self.next_existing();
-                return Err(Error::unexpected($expected, $token.display($self.input())));
+                return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone()));
             }};
             ($help:expr) => {{
                 let $token = $self.next_existing();
-                return Err(
-                    Error::unexpected($expected, $token.display($self.input())).add_help($help)
-                );
+                return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone())
+                    .add_help($help));
             }};
         }
     };
@@ -38,11 +39,13 @@ macro_rules! build_unexpected_peek {
             () => {{
                 let $token = $self.next_existing();
                 return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone())
                     .add_context($context));
             }};
             ($help:expr) => {{
                 let $token = $self.next_existing();
                 return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone())
                     .add_help($help)
                     .add_context($context));
             }};
@@ -57,12 +60,13 @@ macro_rules! build_unexpected_next {
     ($macro_name:ident, $self:ident, $token:ident, $expected:ident) => {
         macro_rules! $macro_name {
             () => {{
-                return Err(Error::unexpected($expected, $token.display($self.input())));
+                return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone()));
             }};
             ($help:expr) => {{
-                return Err(
-                    Error::unexpected($expected, $token.display($self.input())).add_help($help)
-                );
+                return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone())
+                    .add_help($help));
             }};
         }
     };
@@ -70,10 +74,12 @@ macro_rules! build_unexpected_next {
         macro_rules! $macro_name {
             () => {{
                 return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone())
                     .add_context($context));
             }};
             ($help:expr) => {{
                 return Err(Error::unexpected($expected, $token.display($self.input()))
+                    .with_span($token.span.clone())
                     .add_help($help)
                     .add_context($context));
             }};
@@ -174,10 +180,13 @@ impl<'a> Parser<'a> {
     fn expect(&mut self, kind: TokenKind, expected: impl IntoExpected) -> Result<()> {
         let expected = expected.into_expected();
         let Some(token) = self.next()? else {
-            return Err(Error::unexpected_eof(expected));
+            let pos = self.input().len();
+            return Err(Error::unexpected_eof(expected).with_span(pos..pos));
         };
         if token.kind != kind {
-            return Err(Error::unexpected(expected, token.display(self.input())));
+            return Err(
+                Error::unexpected(expected, token.display(self.input())).with_span(token.span)
+            );
         }
         Ok(())
     }
@@ -187,10 +196,10 @@ impl<'a> Parser<'a> {
         let Some(token) = self.next()? else {
             return Ok(());
         };
-        Err(Error::unexpected(
-            ExpectedValue::Eof,
-            token.display(self.input()),
-        ))
+        Err(
+            Error::unexpected(ExpectedValue::Eof, token.display(self.input()))
+                .with_span(token.span),
+        )
     }
 
     /// Consumes a leading [`TokenKind::Whitespace`] token if one is present.
@@ -216,6 +225,7 @@ impl<'a> Parser<'a> {
             return Ok(Query::Tag { name: None });
         };
 
+        let first_span = first.span.clone();
         let tag_name_raw = match first.kind {
             TokenKind::Word => first.content(self.input()),
             TokenKind::Whitespace => {
@@ -227,13 +237,16 @@ impl<'a> Parser<'a> {
                 return Err(Error::unexpected(
                     ExpectedValue::TagName.or(ExpectedValue::Eof),
                     first.display(self.input()),
-                ));
+                )
+                .with_span(first_span));
             }
         };
 
         let tag_name = tag_name_raw.parse().map_err(|err| match err {
             TagItemError::Empty => unreachable!("The lexer should not return empty strings"),
-            TagItemError::InvalidChar(invalid) => Error::invalid_tag_name(invalid, tag_name_raw),
+            TagItemError::InvalidChar(invalid) => {
+                Error::invalid_tag_name(invalid, tag_name_raw).with_span(first_span.clone())
+            }
         })?;
 
         self.skip_whitespace()?;
@@ -260,10 +273,12 @@ impl<'a> Parser<'a> {
             if NM {
                 return Ok(None);
             } else {
-                return Err(Error::unexpected_eof(first_expected));
+                let pos = self.input().len();
+                return Err(Error::unexpected_eof(first_expected).with_span(pos..pos));
             }
         };
 
+        let first_span = first.span.clone();
         let first_name = match first.kind {
             TokenKind::Word => {
                 let first_name_raw = first.content(self.input());
@@ -273,6 +288,7 @@ impl<'a> Parser<'a> {
                     }
                     PersonNameError::InvalidChar(invalid) => {
                         Error::invalid_person_name(invalid, first_name_raw)
+                            .with_span(first_span.clone())
                     }
                 })?
             }
@@ -282,10 +298,10 @@ impl<'a> Parser<'a> {
                 if NM {
                     return Ok(None);
                 } else {
-                    return Err(Error::unexpected(
-                        first_expected,
-                        first.display(self.input()),
-                    ));
+                    return Err(
+                        Error::unexpected(first_expected, first.display(self.input()))
+                            .with_span(first_span),
+                    );
                 }
             }
             TokenKind::TagPrefix
@@ -299,10 +315,10 @@ impl<'a> Parser<'a> {
             | TokenKind::Not
             | TokenKind::NameSeparator
             | TokenKind::QuotedText => {
-                return Err(Error::unexpected(
-                    first_expected,
-                    first.display(self.input()),
-                ));
+                return Err(
+                    Error::unexpected(first_expected, first.display(self.input()))
+                        .with_span(first_span),
+                );
             }
         };
 
@@ -337,17 +353,19 @@ impl<'a> Parser<'a> {
                 | TokenKind::Not
                 | TokenKind::QuotedText => {
                     let separator = self.next_existing();
-                    return Err(Error::unexpected(
-                        expected_sep,
-                        separator.display(self.input()),
-                    ));
+                    return Err(
+                        Error::unexpected(expected_sep, separator.display(self.input()))
+                            .with_span(separator.span),
+                    );
                 }
             }
 
             // Dot without a following word can be ignored
             let Some(next_word) = self.peek()? else { break };
 
-            let name = match next_word.kind {
+            let (next_word_kind, next_word_span) = (next_word.kind, next_word.span.clone());
+
+            let name = match next_word_kind {
                 TokenKind::Word => {
                     let next_word = self.next_existing();
                     next_word.content(self.input())
@@ -369,13 +387,16 @@ impl<'a> Parser<'a> {
                     return Err(Error::unexpected(
                         ExpectedValue::NameSegment.or(ExpectedValue::WhiteSpace),
                         next_word.display(self.input()),
-                    ));
+                    )
+                    .with_span(next_word_span));
                 }
             };
 
             let name = PersonName::parse(name).map_err(|err| match err {
                 PersonNameError::Empty => unreachable!("The lexer should not return empty words"),
-                PersonNameError::InvalidChar(invalid) => Error::invalid_person_name(invalid, name),
+                PersonNameError::InvalidChar(invalid) => {
+                    Error::invalid_person_name(invalid, name).with_span(next_word_span.clone())
+                }
             })?;
 
             names.push(name);
@@ -435,15 +456,19 @@ impl<'a> Parser<'a> {
 
     fn parse_tag_value(&mut self, tag_name: TagItem, group_depth: usize) -> Result<ScoreQuery> {
         let expected = ExpectedValue::TagValueExpression;
-        let value = self
-            .peek()?
-            .ok_or(Error::unexpected_eof(expected.clone()).add_help(Help::AddTagValue))?;
+        let eof_pos = self.input().len();
+        let value = self.peek()?.ok_or_else(|| {
+            Error::unexpected_eof(expected.clone())
+                .with_span(eof_pos..eof_pos)
+                .add_help(Help::AddTagValue)
+        })?;
 
         build_unexpected_peek!(unexpected_val, self, value, expected);
 
         match value.kind {
             TokenKind::Word => {
                 let value = self.next_existing();
+                let value_span = value.span.clone();
                 let value_str = value.content(self.input());
                 let value_item = TagItem::parse(value_str).map_err(|err| match err {
                     TagItemError::Empty => {
@@ -452,7 +477,8 @@ impl<'a> Parser<'a> {
                     TagItemError::InvalidChar(invalid) => Error::new(ErrorKind::InvalidTagValue {
                         invalid,
                         name: value_str.into(),
-                    }),
+                    })
+                    .with_span(value_span.clone()),
                 })?;
 
                 Ok(ScoreQuery::Atom(SearchAtom::Tag(Tag {
@@ -460,7 +486,9 @@ impl<'a> Parser<'a> {
                     value: Some(value_item),
                 })))
             }
-            TokenKind::QuotedText => Err(Error::new(ErrorKind::QuotedTagValue)),
+            TokenKind::QuotedText => {
+                Err(Error::new(ErrorKind::QuotedTagValue).with_span(value.span.clone()))
+            }
 
             // TODO: tag value expressions
             TokenKind::GroupStart | TokenKind::Not => {
@@ -488,9 +516,10 @@ impl<'a> Parser<'a> {
 
         let expected = ExpectedValue::TagName;
 
+        let eof_pos = self.input().len();
         let name_token = self
             .next()?
-            .ok_or(Error::unexpected_eof(expected.clone()))?;
+            .ok_or_else(|| Error::unexpected_eof(expected.clone()).with_span(eof_pos..eof_pos))?;
 
         build_unexpected_next!(unexpected_name, self, name_token, expected);
 
@@ -504,13 +533,16 @@ impl<'a> Parser<'a> {
                     TagItemError::InvalidChar(invalid) => Error::new(ErrorKind::InvalidTagName {
                         name: name.into(),
                         invalid,
-                    }),
+                    })
+                    .with_span(name_token.span.clone()),
                 })?
             }
 
             TokenKind::TagValueSeparator => unexpected_name!(Help::AddTagNameBeforeValue),
             TokenKind::QuotedText => {
-                return Err(Error::new(ErrorKind::QuotedTagName).add_help(Help::QuotedTagName));
+                return Err(Error::new(ErrorKind::QuotedTagName)
+                    .with_span(name_token.span.clone())
+                    .add_help(Help::QuotedTagName));
             }
 
             TokenKind::NamePrefix
@@ -976,7 +1008,10 @@ impl<'a> Parser<'a> {
             build_unexpected_peek!(unexpected_ws, self, ws_tok, expected_ws);
 
             match self.peek()? {
-                None => return Err(Error::unexpected_eof(expected_ws)),
+                None => {
+                    let pos = self.input().len();
+                    return Err(Error::unexpected_eof(expected_ws).with_span(pos..pos));
+                }
                 Some(t) if t.kind != TokenKind::Whitespace => unexpected_ws!(Help::SpaceAfterOr),
                 _ => {}
             }
@@ -1042,7 +1077,8 @@ impl<'a> Parser<'a> {
             .or(ExpectedValue::Group);
 
         let Some(token) = self.peek()? else {
-            return Err(Error::unexpected_eof(expected));
+            let pos = self.input().len();
+            return Err(Error::unexpected_eof(expected).with_span(pos..pos));
         };
 
         build_unexpected_peek!(unexpected, self, token, expected);
@@ -1149,7 +1185,8 @@ impl<'a> Parser<'a> {
             .or(ExpectedValue::Group);
 
         let Some(token) = self.next()? else {
-            return Err(Error::unexpected_eof(expected));
+            let pos = self.input().len();
+            return Err(Error::unexpected_eof(expected).with_span(pos..pos));
         };
 
         build_unexpected_next!(unexpected, self, token, expected);
@@ -2099,5 +2136,80 @@ mod tests {
     #[test]
     fn nested_empty_not_groups() {
         assert_eq!(parse("(!()) foo"), Ok(score(ScoreQuery::Atom(t("foo")))))
+    }
+
+    /// Returns the span of the error, panicking with a helpful message if absent.
+    fn span(err: &Error) -> std::ops::Range<usize> {
+        err.span.clone().expect("error should have a span")
+    }
+
+    #[test]
+    fn span_empty_input() {
+        let err = parse("").unwrap_err();
+        assert_eq!(span(&err), 0..0);
+    }
+
+    #[test]
+    fn span_unexpected_token_points_at_token() {
+        // `|` requires whitespace on both sides; no space before `|` is an error.
+        // The `|` sits at byte 1.
+        let err = parse("a|b").unwrap_err();
+        assert_eq!(span(&err), 1..2);
+    }
+
+    #[test]
+    fn span_unexpected_eof_points_past_end() {
+        // `#` followed by nothing — unexpected EOF while expecting a tag name.
+        let input = "#";
+        let err = parse(input).unwrap_err();
+        assert_eq!(span(&err), input.len()..input.len());
+    }
+
+    #[test]
+    fn span_invalid_tag_name_covers_word_token() {
+        // `##inva*lid` — the invalid char is inside the word "inva*lid" at bytes 2..10.
+        let err = parse("##inva*lid").unwrap_err();
+        assert_eq!(span(&err), 2..10);
+    }
+
+    #[test]
+    fn span_invalid_person_name_covers_word_token() {
+        // `@@123` — "123" at bytes 2..5 is an invalid person name.
+        let err = parse("@@123").unwrap_err();
+        assert_eq!(span(&err), 2..5);
+    }
+
+    #[test]
+    fn span_empty_quoted_string_covers_quotes() {
+        // `""` — the quoted string including its delimiters is at bytes 0..2.
+        let err = parse(r#""""#).unwrap_err();
+        assert_eq!(span(&err), 0..2);
+    }
+
+    #[test]
+    fn span_quoted_tag_name_covers_quoted_token() {
+        // `#"foo"` — the quoted text span (content only, without the `"`) is
+        // 1..4, but the lexer stores the content span, so "foo" is at 2..5 and
+        // the `QuotedText` token content span is the content range. Check that
+        // the span falls inside the input and covers the token.
+        let input = r#"#"foo""#;
+        let err = parse(input).unwrap_err();
+        // The `"foo"` token content starts after the opening `"` at byte 2.
+        assert_eq!(span(&err), 2..5);
+    }
+
+    #[test]
+    fn span_or_missing_space_after_pipe() {
+        // `a |b` — `b` immediately after `|` without space. The error should point at `b`.
+        let err = parse("a |b").unwrap_err();
+        assert_eq!(span(&err), 3..4);
+    }
+
+    #[test]
+    fn span_or_eof_after_pipe_points_past_end() {
+        // `a |` — EOF immediately after `|` with no space; the parser expects whitespace.
+        let input = "a |";
+        let err = parse(input).unwrap_err();
+        assert_eq!(span(&err), input.len()..input.len());
     }
 }

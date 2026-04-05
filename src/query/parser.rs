@@ -492,7 +492,8 @@ impl<'a> Parser<'a> {
     /// consumed.
     fn parse_name(&mut self, group_depth: usize) -> Result<SearchAtom> {
         _ = group_depth;
-        todo!()
+        // TODO: fill in name parsing
+        Err(Error::empty())
     }
 
     /// Parses the contents of a group after the opening `(` has been consumed.

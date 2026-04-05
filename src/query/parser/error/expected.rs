@@ -52,18 +52,25 @@ impl Display for Expected {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expected::OneOf { options } => {
+                let (sep, prefix) = if options.len() == 2 {
+                    (" or ", "")
+                } else {
+                    (", ", "one of: ")
+                };
+
                 write!(
                     f,
-                    "one of: {}",
+                    "{}{}",
+                    prefix,
                     options
                         .iter()
                         .map(|option| option.to_string())
                         .collect::<Vec<_>>()
-                        .join(", ")
+                        .join(sep)
                 )
             }
             Expected::One(option) => {
-                write!(f, "one: {:?}", option)
+                write!(f, "{}", option)
             }
         }
     }

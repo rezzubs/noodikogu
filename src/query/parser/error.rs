@@ -81,12 +81,14 @@ impl Display for Error {
         }
 
         for h in &self.help {
-            write!(f, "\nHelp: {}", h)?;
+            write!(f, "\n-> Help: {}", h)?;
         }
 
         Ok(())
     }
 }
+
+impl std::error::Error for Error {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
@@ -114,10 +116,10 @@ impl Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ErrorKind::UnexpectedEof { expected } => {
-                write!(f, "Ran out of input, expected: {}", expected)
+                write!(f, "Ran out of input, expected {}", expected)
             }
             ErrorKind::UnexpectedToken { expected, found } => {
-                write!(f, "expected: {}, found: {}", expected, found)
+                write!(f, "expected {}, found {}", expected, found)
             }
             ErrorKind::EmptyQuotedString => write!(f, "empty quoted strings are not allowed"),
             ErrorKind::Empty => write!(f, "The input is empty"),

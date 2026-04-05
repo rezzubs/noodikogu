@@ -123,19 +123,19 @@ pub enum DisplayToken {
 impl Display for DisplayToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DisplayToken::TagPrefix => write!(f, "tag prefix `#`"),
-            DisplayToken::TagModePrefix => write!(f, "tag mode prefix `##`"),
-            DisplayToken::TagValueSeparator => write!(f, "tag value separator `:`"),
-            DisplayToken::NamePrefix => write!(f, "name prefix `@`"),
-            DisplayToken::NameModePrefix => write!(f, "name mode prefix `@@`"),
-            DisplayToken::GroupStart => write!(f, "group start `(`"),
-            DisplayToken::GroupEnd => write!(f, "group end `)`"),
-            DisplayToken::Or => write!(f, "OR `|`"),
-            DisplayToken::Not => write!(f, "NOT `!`"),
-            DisplayToken::NameSeparator => write!(f, "name separator `.`"),
+            DisplayToken::TagPrefix => write!(f, "tag prefix (`#`)"),
+            DisplayToken::TagModePrefix => write!(f, "tag mode prefix (`##`)"),
+            DisplayToken::TagValueSeparator => write!(f, "tag value separator (`:`)"),
+            DisplayToken::NamePrefix => write!(f, "name prefix (`@`)"),
+            DisplayToken::NameModePrefix => write!(f, "name mode prefix (`@@`)"),
+            DisplayToken::GroupStart => write!(f, "group start (`(`)"),
+            DisplayToken::GroupEnd => write!(f, "group end (`)`)"),
+            DisplayToken::Or => write!(f, "OR (`|`)"),
+            DisplayToken::Not => write!(f, "NOT (`!`)"),
+            DisplayToken::NameSeparator => write!(f, "name separator (`.`)"),
             DisplayToken::Whitespace { content } => write!(f, "whitespace `{}`", content),
-            DisplayToken::Word { content } => write!(f, "word `{}`", content),
-            DisplayToken::QuotedText { content } => write!(f, "quoted text `\"{}'\"`", content),
+            DisplayToken::Word { content } => write!(f, "word (`{}`)", content),
+            DisplayToken::QuotedText { content } => write!(f, "quoted text \"{}\")", content),
         }
     }
 }

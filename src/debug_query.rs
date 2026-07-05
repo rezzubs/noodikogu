@@ -54,7 +54,8 @@ impl App {
 
     /// Returns the maximum sensible scroll offset based on content and pane height.
     fn max_scroll(&self) -> u16 {
-        let line_count = parse_output(&self.input).lines().count() as u16;
+        let line_count = u16::try_from(parse_output(&self.input).lines().count())
+            .expect("parse output has far fewer than u16::MAX lines");
         line_count.saturating_sub(self.output_height)
     }
 
@@ -87,7 +88,9 @@ impl App {
         frame.render_widget(input_widget, chunks[1]);
 
         // Place cursor at the cursor byte offset, inside the border.
-        let cursor_x = chunks[1].x + 1 + self.cursor as u16;
+        let cursor_x = chunks[1].x
+            + 1
+            + u16::try_from(self.cursor).expect("query input is far shorter than u16::MAX bytes");
         let cursor_y = chunks[1].y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
     }

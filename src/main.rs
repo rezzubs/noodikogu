@@ -1,3 +1,8 @@
+#![cfg_attr(
+    test,
+    allow(clippy::unwrap_used, reason = "unwrap is fine in test code")
+)]
+
 mod debug_query;
 
 use clap::{Parser, Subcommand};

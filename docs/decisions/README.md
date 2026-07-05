@@ -29,9 +29,10 @@ to be re-synced, it's meant to explain a choice that was made.
 
 ## Index
 
-- [0001](0001-turso-connection-design.md) — `Catalogue` owns a
+- [0001](0001-turso-connection-design.md) - `Catalogue` owns a
   `turso::Database`, not a `Connection`; no connection pool.
-- [0002](0002-turso-per-connection-pragmas.md) — which per-connection
+- [0002](0002-turso-per-connection-pragmas.md) - which per-connection
   PRAGMAs `Catalogue::connect()` sets vs. leaves at their default, and why.
-- [0003](0003-migrations.md) — hand-rolled migrations tracked via
+- [0003](0003-migrations.md) - hand-rolled migrations tracked via
   `PRAGMA user_version`, no framework dependency.
+- [0004](0004-checked-arithmetic.md) - Checked arithmetic in release builds

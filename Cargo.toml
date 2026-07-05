@@ -2,10 +2,39 @@
 members = [".", "fuzz"]
 default_members = ["."]
 
+# Overflow silently wraps in release by default; panicking instead matches
+# what dev builds already do and is cheap enough at this project's scale.
+[profile.release]
+overflow-checks = true
+
+# Shared lint policy for every crate in the workspace. Each member crate
+# opts in with `[lints] workspace = true` in its own Cargo.toml — new crates
+# just need those two lines, not a repeated `#![warn(...)]` in their root.
+[workspace.lints.clippy]
+# `priority = -1` so a crate/module can still `#[allow(clippy::some_lint)]`
+# to override one specific lint from the group without Cargo complaining
+# about conflicting levels.
+pedantic = { level = "warn", priority = -1 }
+# `unwrap` is banned outside tests (use `expect` with a message instead).
+# Each crate root pairs this with `#![cfg_attr(test, allow(clippy::unwrap_used))]`
+# so it stays denied in production code but allowed in `#[cfg(test)]` modules.
+unwrap_used = "deny"
+# `as` casts skip the safety checks `Into`/`TryInto` give you; use those
+# instead. If an `as` cast is truly needed, allow it locally with a `reason`
+# explaining why (see `allow_attributes_without_reason` below).
+as_conversions = "deny"
+# Every `#[allow(...)]` anywhere in the workspace must say why, via
+# `reason = "..."` — applies to the allows above too, so writing new ones
+# without a reason fails the build.
+allow_attributes_without_reason = "deny"
+
 [package]
 name = "noodikogu"
 version = "0.1.0"
 edition = "2024"
+
+[lints]
+workspace = true
 
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }

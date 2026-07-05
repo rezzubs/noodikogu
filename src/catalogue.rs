@@ -3,6 +3,7 @@
 
 mod error;
 mod migration;
+mod normalize;
 
 pub use error::Error;
 

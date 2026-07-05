@@ -36,3 +36,5 @@ to be re-synced, it's meant to explain a choice that was made.
 - [0003](0003-migrations.md) - hand-rolled migrations tracked via
   `PRAGMA user_version`, no framework dependency.
 - [0004](0004-checked-arithmetic.md) - Checked arithmetic in release builds
+- [0005](0005-hand-rolled-search.md) - turso has no FTS5; search is
+  hand-rolled (title/person/tag atoms all resolve to plain SQL) instead.

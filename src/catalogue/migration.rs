@@ -1,5 +1,7 @@
 //! A hand-rolled, programmatic schema-migration runner.
 
+mod m0001_scores_and_titles;
+
 use super::Error;
 use std::future::Future;
 use std::pin::Pin;
@@ -10,15 +12,17 @@ type MigrationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Error>> + Send
 
 /// A single schema change.
 ///
-/// `apply` receives a `&Connection` — in practice always a `&Transaction`
-/// (which derefs to `Connection`, see `docs/decisions/0003-migrations.md`)
-/// — so a migration can run arbitrary Rust: read rows, transform them, and
+/// `apply` receives a `&Connection` - in practice always a `&Transaction`
+/// (which derefs to `Connection`, see `docs/decisions/0003-migrations.md`) -
+/// so a migration can run arbitrary Rust: read rows, transform them, and
 /// write them back inside the same transaction, not just execute a fixed
 /// SQL string.
 ///
-/// A migration's schema version is its 1-based position in [`ALL`], not a
-/// field on this type — there's only one place that could ever disagree
-/// with itself.
+/// A migration's schema version is its 1-based position in [`ALL`], not a field
+/// on this type - there's only one place that could ever disagree with itself.
+/// Each migration submodule is named and numbered to match
+/// (`m0001_scores_and_titles`, `m0002_...`, ...), the module name/file prefix
+/// is where the version actually lives; `name` below is just a description.
 ///
 /// Migrations are forward-only: there's no `down`/revert. This project's
 /// recovery mechanism for a bad state is restoring a backup, not undoing a
@@ -38,14 +42,16 @@ type MigrationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Error>> + Send
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Migration {
-    /// A short human-readable name, for debugging/logging only.
+    /// A short human-readable description, for debugging/logging only -
+    /// not an identifier. A migration's actual identity is its numeric
+    /// position in [`ALL`] (see the submodule naming convention above).
     pub name: &'static str,
     /// Runs the migration's schema change against `conn`.
     pub apply: fn(&Connection) -> MigrationFuture<'_>,
 }
 
 /// All migrations, in the order they should be applied.
-pub(crate) const ALL: &[Migration] = &[];
+pub(crate) const ALL: &[Migration] = &[m0001_scores_and_titles::MIGRATION];
 
 /// Brings `conn`'s database up to date by applying every migration in
 /// `migrations` whose position is greater than the current
@@ -87,6 +93,38 @@ async fn user_version(conn: &Connection) -> Result<i64, Error> {
         .await?
         .expect("PRAGMA user_version always returns exactly one row");
     row.get::<i64>(0).map_err(Error::from)
+}
+
+/// Test-only fixture: a fresh in-memory connection with foreign keys
+/// enabled, and nothing else migrated yet.
+#[cfg(test)]
+pub(crate) async fn test_connection() -> Connection {
+    let db = turso::Builder::new_local(":memory:").build().await.unwrap();
+    let conn = db.connect().unwrap();
+    conn.execute("PRAGMA foreign_keys = ON", ()).await.unwrap();
+    conn
+}
+
+/// Test-only: the first `version` entries of [`ALL`] - i.e. the schema
+/// exactly as migration `version` leaves it, unaffected by anything after
+/// it in history.
+///
+/// A migration's own tests should always fetch their fixture through this
+/// (passing their own submodule's `VERSION`), never `ALL` directly: `ALL`
+/// always reflects the *current tip* of history, so if a later migration
+/// ever alters something an earlier one established, using `ALL` would
+/// silently start running the earlier migration's tests against the wrong
+/// schema instead of the one they actually claim to test. `version` only
+/// needs to be right once, at the point a migration is written - history
+/// is forward-only and immutable (see `docs/decisions/0003-migrations.md`),
+/// so nothing before it can ever change position afterward.
+///
+/// (Testing that the *entire* history replays cleanly end to end is a
+/// separate concern, already covered by
+/// `catalogue::tests::open_succeeds_on_a_fresh_in_memory_database`.)
+#[cfg(test)]
+pub(crate) fn history_through(version: usize) -> &'static [Migration] {
+    &ALL[..version]
 }
 
 #[cfg(test)]

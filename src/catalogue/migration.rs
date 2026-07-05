@@ -2,13 +2,13 @@
 
 mod m0001_scores_and_titles;
 
-use super::Error;
+use super::{DatabaseError, query_one};
 use std::future::Future;
 use std::pin::Pin;
 use turso::Connection;
 
 /// The boxed future returned by a [`Migration::apply`] function.
-type MigrationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>>;
+type MigrationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), DatabaseError>> + Send + 'a>>;
 
 /// A single schema change.
 ///
@@ -60,7 +60,7 @@ pub(crate) const ALL: &[Migration] = &[m0001_scores_and_titles::MIGRATION];
 /// Each migration runs inside its own transaction. If `apply` returns
 /// `Err`, the `Transaction` guard rolls back on drop (no manual `ROLLBACK`
 /// needed) and `user_version` is left unchanged for that migration.
-pub(crate) async fn run(conn: &mut Connection, migrations: &[Migration]) -> Result<(), Error> {
+pub(crate) async fn run(conn: &mut Connection, migrations: &[Migration]) -> Result<(), DatabaseError> {
     let current = user_version(conn).await?;
     tracing::debug!(current, "checking for pending migrations");
 
@@ -86,13 +86,12 @@ pub(crate) async fn run(conn: &mut Connection, migrations: &[Migration]) -> Resu
 }
 
 /// Reads the current `PRAGMA user_version`.
-async fn user_version(conn: &Connection) -> Result<i64, Error> {
+async fn user_version(conn: &Connection) -> Result<i64, DatabaseError> {
     let mut rows = conn.query("PRAGMA user_version", ()).await?;
-    let row = rows
-        .next()
+    let row = query_one(&mut rows)
         .await?
         .expect("PRAGMA user_version always returns exactly one row");
-    row.get::<i64>(0).map_err(Error::from)
+    row.get::<i64>(0).map_err(DatabaseError::from)
 }
 
 /// Test-only fixture: a fresh in-memory connection with foreign keys

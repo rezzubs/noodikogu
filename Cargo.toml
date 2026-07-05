@@ -37,6 +37,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
+chrono = "0.4.45"
 clap = { version = "4.6.0", features = ["derive"] }
 ratatui = "0.30.0"
 sea-query = "1.0.1"

@@ -27,9 +27,21 @@ pub(crate) fn normalize_text(input: &str) -> String {
         .to_lowercase()
 }
 
+/// Splits already-`normalize_text`-normalized text into its constituent
+/// words. Centralized so write-time indexing (`title_words`) and
+/// search-time matching never disagree about what counts as a "word".
+pub(crate) fn words(normalized: &str) -> impl Iterator<Item = &str> {
+    normalized.split_whitespace()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn words_splits_on_whitespace() {
+        assert_eq!(words("ave maria").collect::<Vec<_>>(), vec!["ave", "maria"]);
+    }
 
     #[test]
     fn strips_latin_diacritics_and_lowercases() {

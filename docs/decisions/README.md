@@ -38,3 +38,9 @@ to be re-synced, it's meant to explain a choice that was made.
 - [0004](0004-checked-arithmetic.md) - Checked arithmetic in release builds
 - [0005](0005-hand-rolled-search.md) - turso has no FTS5; search is
   hand-rolled (title/person/tag atoms all resolve to plain SQL) instead.
+- [0006](0006-person-uniqueness-key.md) - people are deduped by a
+  case-folded, diacritic-preserving key, separate from the
+  diacritic-stripped normalization search uses.
+- [0007](0007-tag-value-per-attachment.md) - a tag's value lives on the
+  `score_tags` attachment, not the tag itself; a score may hold several
+  values of the same tag, but not a valueless one alongside a valued one.

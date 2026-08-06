@@ -42,6 +42,38 @@ impl From<TitleId> for turso::Value {
     }
 }
 
+/// The id of a row in the `people` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PersonId(pub i64);
+
+impl fmt::Display for PersonId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<PersonId> for turso::Value {
+    fn from(id: PersonId) -> Self {
+        turso::Value::Integer(id.0)
+    }
+}
+
+/// The id of a row in the `tags` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TagId(pub i64);
+
+impl fmt::Display for TagId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<TagId> for turso::Value {
+    fn from(id: TagId) -> Self {
+        turso::Value::Integer(id.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +86,15 @@ mod tests {
     #[test]
     fn title_id_displays_as_raw_integer() {
         assert_eq!(TitleId(7).to_string(), "7");
+    }
+
+    #[test]
+    fn person_id_displays_as_raw_integer() {
+        assert_eq!(PersonId(3).to_string(), "3");
+    }
+
+    #[test]
+    fn tag_id_displays_as_raw_integer() {
+        assert_eq!(TagId(9).to_string(), "9");
     }
 }

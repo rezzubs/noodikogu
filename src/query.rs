@@ -139,9 +139,17 @@ pub enum SearchAtom {
 /// A people search mode query (`@@`).
 ///
 /// Must contain at least one name component. Use `Query::Person(None)` to represent `@@` alone.
+///
+/// Storage is split into `first` (always present) and `rest` (possibly
+/// empty) rather than one `Vec<PersonName>`, so the "at least one
+/// component" invariant [`Person::new`] validates is encoded in the type
+/// itself - [`Person::first`] can just return a `&PersonName`, with no
+/// `Option`/`.expect()` needed at any call site to handle an empty case
+/// that can't actually occur.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Person {
-    names: Vec<PersonName>,
+    first: PersonName,
+    rest: Vec<PersonName>,
 }
 
 /// Error returned when constructing a [`Person`] fails.
@@ -154,17 +162,28 @@ pub enum PersonError {
 impl Person {
     /// Constructs a person query from a non-empty list of name components.
     pub fn new(names: Vec<PersonName>) -> Result<Self, PersonError> {
-        if names.is_empty() {
-            return Err(PersonError::Empty);
-        }
-        Ok(Person { names })
+        let mut names = names.into_iter();
+        let first = names.next().ok_or(PersonError::Empty)?;
+        Ok(Person {
+            first,
+            rest: names.collect(),
+        })
     }
 
-    /// Returns a slice of the name components in this person query.
-    ///
-    /// The slice is guaranteed to be non-empty
-    pub fn names(&self) -> &[PersonName] {
-        &self.names
+    /// The first name component. Always present - unlike the other
+    /// components, no empty case exists to handle.
+    pub fn first(&self) -> &PersonName {
+        &self.first
+    }
+
+    /// The name components after the first, if any.
+    pub fn rest(&self) -> &[PersonName] {
+        &self.rest
+    }
+
+    /// All name components, in order.
+    pub fn names(&self) -> impl Iterator<Item = &PersonName> {
+        std::iter::once(&self.first).chain(self.rest.iter())
     }
 }
 

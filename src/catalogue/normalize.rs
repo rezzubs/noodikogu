@@ -34,6 +34,16 @@ pub(crate) fn words(normalized: &str) -> impl Iterator<Item = &str> {
     normalized.split_whitespace()
 }
 
+/// Case-folds `input` for uniqueness comparisons that must still treat
+/// diacritically distinct letters as genuinely different (e.g. "Marten"
+/// and "Märten" are different people, so a uniqueness check can't use
+/// [`normalize_text`] - that would incorrectly collide them). Unicode NFC
+/// canonicalization plus Unicode-aware lowercasing, deliberately without
+/// `normalize_text`'s diacritic-stripping step.
+pub(crate) fn case_fold(input: &str) -> String {
+    input.nfc().collect::<String>().to_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,6 +51,16 @@ mod tests {
     #[test]
     fn words_splits_on_whitespace() {
         assert_eq!(words("ave maria").collect::<Vec<_>>(), vec!["ave", "maria"]);
+    }
+
+    #[test]
+    fn case_fold_lowercases() {
+        assert_eq!(case_fold("MARTEN"), "marten");
+    }
+
+    #[test]
+    fn case_fold_preserves_diacritics() {
+        assert_ne!(case_fold("Märten"), case_fold("Marten"));
     }
 
     #[test]

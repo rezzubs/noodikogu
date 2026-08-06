@@ -28,3 +28,42 @@ pub(super) enum TitleWords {
     TitleId,
     Word,
 }
+
+#[derive(sea_query::Iden)]
+pub(super) enum People {
+    Table,
+    Id,
+    DisplayName,
+    DisplayNameKey,
+}
+
+#[derive(sea_query::Iden)]
+pub(super) enum PersonWords {
+    Table,
+    PersonId,
+    Word,
+}
+
+#[derive(sea_query::Iden)]
+pub(super) enum ScorePeople {
+    Table,
+    ScoreId,
+    PersonId,
+}
+
+#[derive(sea_query::Iden)]
+pub(super) enum Tags {
+    Table,
+    Id,
+    Name,
+    NameNormalized,
+}
+
+#[derive(sea_query::Iden)]
+pub(super) enum ScoreTags {
+    Table,
+    ScoreId,
+    TagId,
+    Value,
+    ValueNormalized,
+}

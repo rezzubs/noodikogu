@@ -6,15 +6,19 @@ mod id;
 mod migration;
 mod normalize;
 mod params;
+mod person;
 mod schema;
 mod score;
 mod search;
+mod tag;
 mod title;
 
 pub use error::DatabaseError;
-pub use id::{ScoreId, TitleId};
+pub use id::{PersonId, ScoreId, TagId, TitleId};
+pub use person::{AttachPersonError, CreatePersonError, DeletePersonError, DetachPersonError};
 pub use score::{DeleteScoreError, SetDescriptionError};
 pub use search::{Pagination, ScoreSummary, SearchError};
+pub use tag::{AttachTagError, CreateTagError, DeleteTagError, DetachTagError};
 pub use title::{
     AddTitleError, EmptyTitleError, RemoveTitleError, SetPrimaryTitleError, Title,
     UpdateTitleValueError,

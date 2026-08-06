@@ -47,11 +47,6 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`SearchError::Db`] on an underlying database failure.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `query` contains a `Person` or `Tag` search atom - not
-    /// yet supported, see `docs/decisions/0005-hand-rolled-search.md`.
     pub async fn search(
         &self,
         query: ScoreQuery,
@@ -112,7 +107,7 @@ fn hydrate(ids: sea_query::SelectStatement, pagination: Pagination) -> sea_query
 mod tests {
     use super::*;
     use crate::catalogue::migration;
-    use crate::catalogue::normalize::{normalize_text, words};
+    use crate::catalogue::normalize::{case_fold, normalize_text, words};
     use crate::query::{AndQuery, NotQuery, OrQuery, ScoreQuery, SearchAtom};
 
     /// A fully migrated in-memory catalogue with a handful of scores inserted
@@ -135,7 +130,7 @@ mod tests {
         catalogue
     }
 
-    async fn insert_score(catalogue: &Catalogue, title: &str) {
+    async fn insert_score(catalogue: &Catalogue, title: &str) -> i64 {
         let conn = catalogue.connect().await.unwrap();
         conn.execute(
             "INSERT INTO scores (created_at) VALUES ('2026-01-01T00:00:00Z')",
@@ -163,10 +158,99 @@ mod tests {
             .await
             .unwrap();
         }
+
+        score_id
+    }
+
+    /// Inserts a `people` row (plus its `person_words`) directly via SQL,
+    /// mirroring exactly what `person.rs::create_person` does - the
+    /// mutation API is tested independently, see `person.rs`.
+    async fn insert_person(catalogue: &Catalogue, names: &[&str]) -> i64 {
+        let conn = catalogue.connect().await.unwrap();
+        let display_name = names.join(" ");
+        let display_name_key = case_fold(&display_name);
+        conn.execute(
+            "INSERT INTO people (display_name, display_name_key) VALUES (?, ?)",
+            (display_name.clone(), display_name_key),
+        )
+        .await
+        .unwrap();
+        let person_id = conn.last_insert_rowid();
+
+        for word in words(&normalize_text(&display_name)) {
+            conn.execute(
+                "INSERT OR IGNORE INTO person_words (person_id, word) VALUES (?, ?)",
+                (person_id, word),
+            )
+            .await
+            .unwrap();
+        }
+
+        person_id
+    }
+
+    /// Inserts a `tags` row directly via SQL, mirroring `tag.rs::create_tag`.
+    /// A tag's value is a per-attachment concept, not stored here - see
+    /// `attach_tag_to_score`.
+    async fn insert_tag(catalogue: &Catalogue, name: &str) -> i64 {
+        let conn = catalogue.connect().await.unwrap();
+        let name_normalized = normalize_text(name);
+        conn.execute(
+            "INSERT INTO tags (name, name_normalized) VALUES (?, ?)",
+            (name, name_normalized),
+        )
+        .await
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    async fn attach_person_to_score(catalogue: &Catalogue, score_id: i64, person_id: i64) {
+        let conn = catalogue.connect().await.unwrap();
+        conn.execute(
+            "INSERT INTO score_people (score_id, person_id) VALUES (?, ?)",
+            (score_id, person_id),
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Inserts a `score_tags` row directly via SQL, mirroring
+    /// `tag.rs::attach_tag` - `value` is per-attachment, per this table.
+    async fn attach_tag_to_score(
+        catalogue: &Catalogue,
+        score_id: i64,
+        tag_id: i64,
+        value: Option<&str>,
+    ) {
+        let conn = catalogue.connect().await.unwrap();
+        let value_normalized = value.map(normalize_text);
+        conn.execute(
+            "INSERT INTO score_tags (score_id, tag_id, value, value_normalized) VALUES (?, ?, ?, ?)",
+            (score_id, tag_id, value, value_normalized),
+        )
+        .await
+        .unwrap();
     }
 
     fn atom(text: &str) -> ScoreQuery {
         ScoreQuery::Atom(SearchAtom::Title(text.to_string()))
+    }
+
+    fn person_atom(names: &[&str]) -> ScoreQuery {
+        let names = names
+            .iter()
+            .map(|n| crate::query::PersonName::parse(n).unwrap())
+            .collect();
+        ScoreQuery::Atom(SearchAtom::Person(
+            crate::query::Person::new(names).unwrap(),
+        ))
+    }
+
+    fn tag_atom(name: &str, value: Option<&str>) -> ScoreQuery {
+        ScoreQuery::Atom(SearchAtom::Tag(crate::query::Tag {
+            name: crate::query::TagItem::parse(name).unwrap(),
+            value: value.map(|v| crate::query::TagItem::parse(v).unwrap()),
+        }))
     }
 
     fn full_page() -> Pagination {
@@ -311,5 +395,161 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["Gamma Song"]
         );
+    }
+
+    #[tokio::test]
+    async fn person_atom_matches_a_score_with_that_person_attached() {
+        let catalogue = seeded_catalogue(&["Ave Maria", "Total Praise"]).await;
+        let scores = catalogue.search(atom("Ave"), full_page()).await.unwrap();
+        let ave_maria_id = scores[0].id.0;
+        let person_id = insert_person(&catalogue, &["Johann", "Bach"]).await;
+        attach_person_to_score(&catalogue, ave_maria_id, person_id).await;
+
+        assert_eq!(
+            titles_for(&catalogue, person_atom(&["Bach"])).await,
+            vec!["Ave Maria"]
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_component_person_atom_requires_every_component_on_the_same_person() {
+        let catalogue = seeded_catalogue(&["Ave Maria"]).await;
+        let scores = catalogue.search(atom("Ave"), full_page()).await.unwrap();
+        let score_id = scores[0].id.0;
+        let johann_bach = insert_person(&catalogue, &["Johann", "Bach"]).await;
+        attach_person_to_score(&catalogue, score_id, johann_bach).await;
+
+        assert_eq!(
+            titles_for(&catalogue, person_atom(&["Johann", "Bach"])).await,
+            vec!["Ave Maria"]
+        );
+    }
+
+    /// Two different people, each holding one of the two queried
+    /// components, attached to the same score - the atom must not match,
+    /// since its components have to correlate to the *same* person, not
+    /// merely the same score (mirrors `compile_title`'s "same title row"
+    /// rule, applied to `person_words`/`score_people`).
+    #[tokio::test]
+    async fn person_atom_does_not_match_components_split_across_different_people() {
+        let catalogue = seeded_catalogue(&["Ave Maria"]).await;
+        let scores = catalogue.search(atom("Ave"), full_page()).await.unwrap();
+        let score_id = scores[0].id.0;
+        let anna = insert_person(&catalogue, &["Anna"]).await;
+        let berta = insert_person(&catalogue, &["Berta"]).await;
+        attach_person_to_score(&catalogue, score_id, anna).await;
+        attach_person_to_score(&catalogue, score_id, berta).await;
+
+        assert_eq!(
+            titles_for(&catalogue, person_atom(&["Anna", "Berta"])).await,
+            Vec::<String>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn tag_atom_without_value_matches_regardless_of_the_tags_actual_value() {
+        let catalogue = seeded_catalogue(&["Ave Maria"]).await;
+        let scores = catalogue.search(atom("Ave"), full_page()).await.unwrap();
+        let score_id = scores[0].id.0;
+        let tag_id = insert_tag(&catalogue, "key").await;
+        attach_tag_to_score(&catalogue, score_id, tag_id, Some("CMajor")).await;
+
+        assert_eq!(
+            titles_for(&catalogue, tag_atom("key", None)).await,
+            vec!["Ave Maria"]
+        );
+    }
+
+    /// A tag with no value attached at all must still match a bare (no
+    /// value) atom - the whole point of `#difficulty` being usable without
+    /// a value.
+    #[tokio::test]
+    async fn tag_atom_without_value_matches_attachments_with_no_value_too() {
+        let catalogue = seeded_catalogue(&["Ave Maria"]).await;
+        let score_id = catalogue.search(atom("Ave"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+        let tag_id = insert_tag(&catalogue, "sacred").await;
+        attach_tag_to_score(&catalogue, score_id, tag_id, None).await;
+
+        assert_eq!(
+            titles_for(&catalogue, tag_atom("sacred", None)).await,
+            vec!["Ave Maria"]
+        );
+    }
+
+    /// A `Tag` atom with a value must not match a different score's
+    /// attachment of the *same* tag with a different value - value is a
+    /// per-attachment (`score_tags`) concept, matched against the specific
+    /// attachment's row, not the tag's identity.
+    #[tokio::test]
+    async fn tag_atom_with_value_does_not_match_a_different_value() {
+        let catalogue = seeded_catalogue(&["Ave Maria", "Total Praise"]).await;
+        let ave_maria_id = catalogue.search(atom("Ave"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+        let total_praise_id = catalogue.search(atom("Total"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+        let key_tag = insert_tag(&catalogue, "key").await;
+        attach_tag_to_score(&catalogue, ave_maria_id, key_tag, Some("CMajor")).await;
+        attach_tag_to_score(&catalogue, total_praise_id, key_tag, Some("DMinor")).await;
+
+        assert_eq!(
+            titles_for(&catalogue, tag_atom("key", Some("CMajor"))).await,
+            vec!["Ave Maria"]
+        );
+    }
+
+    /// A single score may carry the same tag with several different
+    /// values at once (e.g. `#laulupidu:2020` and `#laulupidu:2025`) -
+    /// each value-specific query matches it, and the bare (no-value) query
+    /// matches it exactly once despite the multiple underlying rows
+    /// (`DISTINCT` on `score_id` in `compile_tag`).
+    #[tokio::test]
+    async fn tag_atom_matches_a_score_with_multiple_values_of_the_same_tag() {
+        let catalogue = seeded_catalogue(&["Ave Maria"]).await;
+        let score_id = catalogue.search(atom("Ave"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+        let tag_id = insert_tag(&catalogue, "laulupidu").await;
+        attach_tag_to_score(&catalogue, score_id, tag_id, Some("2020")).await;
+        attach_tag_to_score(&catalogue, score_id, tag_id, Some("2025")).await;
+
+        assert_eq!(
+            titles_for(&catalogue, tag_atom("laulupidu", Some("2020"))).await,
+            vec!["Ave Maria"]
+        );
+        assert_eq!(
+            titles_for(&catalogue, tag_atom("laulupidu", Some("2025"))).await,
+            vec!["Ave Maria"]
+        );
+        assert_eq!(
+            titles_for(&catalogue, tag_atom("laulupidu", None)).await,
+            vec!["Ave Maria"]
+        );
+    }
+
+    #[tokio::test]
+    async fn person_and_title_atoms_combine_with_and() {
+        let catalogue = seeded_catalogue(&["Ave Maria", "Total Praise"]).await;
+        let ave_maria_id = catalogue.search(atom("Ave"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+        let total_praise_id = catalogue.search(atom("Total"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+        let anna = insert_person(&catalogue, &["Anna"]).await;
+        attach_person_to_score(&catalogue, ave_maria_id, anna).await;
+        attach_person_to_score(&catalogue, total_praise_id, anna).await;
+
+        let query = ScoreQuery::And(vec![
+            AndQuery::Atom(SearchAtom::Title("Ave".to_string())),
+            match person_atom(&["Anna"]) {
+                ScoreQuery::Atom(atom) => AndQuery::Atom(atom),
+                _ => unreachable!(),
+            },
+        ]);
+        assert_eq!(titles_for(&catalogue, query).await, vec!["Ave Maria"]);
     }
 }

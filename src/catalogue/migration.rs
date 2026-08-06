@@ -1,6 +1,7 @@
 //! A hand-rolled, programmatic schema-migration runner.
 
 mod m0001_scores_and_titles;
+mod m0002_people_and_tags;
 
 use super::{DatabaseError, query_one};
 use std::future::Future;
@@ -51,7 +52,10 @@ pub(crate) struct Migration {
 }
 
 /// All migrations, in the order they should be applied.
-pub(crate) const ALL: &[Migration] = &[m0001_scores_and_titles::MIGRATION];
+pub(crate) const ALL: &[Migration] = &[
+    m0001_scores_and_titles::MIGRATION,
+    m0002_people_and_tags::MIGRATION,
+];
 
 /// Brings `conn`'s database up to date by applying every migration in
 /// `migrations` whose position is greater than the current

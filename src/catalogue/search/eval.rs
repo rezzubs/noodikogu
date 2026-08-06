@@ -17,14 +17,16 @@
 //! The rule applied uniformly below: whenever a composite node's result
 //! becomes one operand of a *different* set operator, [`wrap`] it first
 //! into a derived table. A flat run of the *same* operator never needs
-//! wrapping (associative). This is applied mechanically, not
-//! case-by-case, so adding `Person`/`Tag` atoms later needs zero changes
-//! to this composition logic - only a new [`compile_atom`] arm.
+//! wrapping (associative).
 
 use crate::catalogue::normalize::{normalize_text, words};
-use crate::catalogue::schema::{Scores, TitleWords, Titles};
-use crate::query::{AndQuery, NotQuery, OrQuery, ScoreQuery, SearchAtom};
-use sea_query::{Alias, Expr, ExprTrait, JoinType, LikeExpr, Query, SelectStatement, UnionType};
+use crate::catalogue::schema::{
+    PersonWords, ScorePeople, ScoreTags, Scores, Tags, TitleWords, Titles,
+};
+use crate::query::{AndQuery, NotQuery, OrQuery, Person, ScoreQuery, SearchAtom, Tag};
+use sea_query::{
+    Alias, Expr, ExprTrait, IntoColumnRef, JoinType, LikeExpr, Query, SelectStatement, UnionType,
+};
 
 /// The name every compiled statement's sole output column is aliased to.
 const SCORE_ID: &str = "score_id";
@@ -147,13 +149,8 @@ fn combine(
 fn compile_atom(atom: SearchAtom) -> SelectStatement {
     match atom {
         SearchAtom::Title(text) => compile_title(&text),
-        // No `people`/`score_people` schema yet. When it exists, this
-        // becomes `compile_person(person)` returning the same
-        // single-`score_id`-column shape as `compile_title` - nothing
-        // above this match arm needs to change.
-        SearchAtom::Person(_) => todo!("no people/score_people schema yet"),
-        // Same story for tags.
-        SearchAtom::Tag(_) => todo!("no tags/score_tags schema yet"),
+        SearchAtom::Person(person) => compile_person(&person),
+        SearchAtom::Tag(tag) => compile_tag(&tag),
     }
 }
 
@@ -206,14 +203,101 @@ fn compile_title(text: &str) -> SelectStatement {
     select.take()
 }
 
-/// `<alias>.word LIKE '<escaped word>%' ESCAPE '\'` - an index-backed
-/// prefix match (no leading wildcard).
+/// Matches a `Person` atom: every name component in `person` must appear as
+/// a prefix of some word belonging to the *same* person (not merely the
+/// same score) - the same "same-row" correlation [`compile_title`] enforces
+/// for title words via a self-join, applied one level further out here
+/// since a person's `score_id` comes via the `score_people` junction rather
+/// than a direct column on `person_words`.
+fn compile_person(person: &Person) -> SelectStatement {
+    let first_word = normalize_text(person.first());
+
+    let base = Alias::new("person_words_0");
+    let mut select = Query::select();
+    select
+        .expr_as(
+            Expr::col((ScorePeople::Table, ScorePeople::ScoreId)),
+            Alias::new(SCORE_ID),
+        )
+        .distinct() // a person with a repeated word could otherwise match twice
+        .from_as(PersonWords::Table, base.clone())
+        .inner_join(
+            ScorePeople::Table,
+            Expr::col((ScorePeople::Table, ScorePeople::PersonId))
+                .equals((base.clone(), PersonWords::PersonId)),
+        )
+        .and_where(prefix_match((base.clone(), PersonWords::Word), &first_word));
+
+    for (i, name) in person.rest().iter().enumerate() {
+        // `rest` starts at the second query word, so its own words are
+        // aliased `person_words_1`, `person_words_2`, ... - one ahead of
+        // `rest`'s own 0-based index.
+        let word = normalize_text(name);
+        let alias = Alias::new(format!("person_words_{}", i + 1));
+        select
+            .join_as(
+                JoinType::InnerJoin,
+                PersonWords::Table,
+                alias.clone(),
+                Expr::col((alias.clone(), PersonWords::PersonId))
+                    .equals((base.clone(), PersonWords::PersonId)),
+            )
+            .and_where(prefix_match((alias, PersonWords::Word), &word));
+    }
+
+    select.take()
+}
+
+/// Matches a `Tag` atom. Unlike [`compile_title`]/[`compile_person`], no
+/// self-join is needed: a tag's name lives on `tags`, and its (optional)
+/// value is a per-attachment concept on `score_tags` - the join between the
+/// two tables is itself what correlates a matched name to a specific
+/// attachment's value, so a `WHERE` on `tags.name_normalized` (always) plus,
+/// only if the atom carries a value, another on `score_tags.value_normalized`
+/// is enough.
+fn compile_tag(tag: &Tag) -> SelectStatement {
+    let mut select = Query::select();
+    select
+        .expr_as(
+            Expr::col((ScoreTags::Table, ScoreTags::ScoreId)),
+            Alias::new(SCORE_ID),
+        )
+        .distinct()
+        .from(Tags::Table)
+        .inner_join(
+            ScoreTags::Table,
+            Expr::col((ScoreTags::Table, ScoreTags::TagId)).equals((Tags::Table, Tags::Id)),
+        )
+        .and_where(prefix_match(
+            (Tags::Table, Tags::NameNormalized),
+            &normalize_text(&tag.name),
+        ));
+
+    if let Some(value) = &tag.value {
+        select.and_where(prefix_match(
+            (ScoreTags::Table, ScoreTags::ValueNormalized),
+            &normalize_text(value),
+        ));
+    }
+
+    select.take()
+}
+
+/// `<column> LIKE '<escaped word>%' ESCAPE '\'` - an index-backed prefix
+/// match (no leading wildcard).
 ///
 /// `%`, `_`, and a literal `\` in `word` are backslash-escaped first,
 /// since `word` is arbitrary user-typed text and those three characters
 /// would otherwise be interpreted as LIKE wildcards / the escape
 /// introducer rather than literal characters to match.
-fn word_prefix(alias: Alias, word: &str) -> Expr {
+fn prefix_match(column: impl IntoColumnRef, word: &str) -> Expr {
+    Expr::col(column).like(LikeExpr::new(escape_prefix_pattern(word)).escape('\\'))
+}
+
+/// Backslash-escapes `%`, `_`, and a literal `\` in `word`, then appends a
+/// trailing `%` for a prefix match. Split out of [`prefix_match`] so it can
+/// be pure text-transform-tested independently of `sea_query` types.
+fn escape_prefix_pattern(word: &str) -> String {
     let mut pattern = String::with_capacity(word.len() + 1);
     for c in word.chars() {
         if matches!(c, '%' | '_' | '\\') {
@@ -222,7 +306,14 @@ fn word_prefix(alias: Alias, word: &str) -> Expr {
         pattern.push(c);
     }
     pattern.push('%');
-    Expr::col((alias, TitleWords::Word)).like(LikeExpr::new(pattern).escape('\\'))
+    pattern
+}
+
+/// `<alias>.word LIKE '<escaped word>%' ESCAPE '\'` - [`compile_title`]'s
+/// own thin wrapper around [`prefix_match`], kept as a separate name since
+/// it's always against `title_words.word` specifically.
+fn word_prefix(alias: Alias, word: &str) -> Expr {
+    prefix_match((alias, TitleWords::Word), word)
 }
 
 /// Snapshot-style tests asserting the exact SQL/params `compile_score_query`
@@ -244,6 +335,21 @@ mod tests {
 
     fn atom(text: &str) -> SearchAtom {
         SearchAtom::Title(text.to_string())
+    }
+
+    fn person_atom(names: &[&str]) -> SearchAtom {
+        let names = names
+            .iter()
+            .map(|n| crate::query::PersonName::parse(n).unwrap())
+            .collect();
+        SearchAtom::Person(Person::new(names).unwrap())
+    }
+
+    fn tag_atom(name: &str, value: Option<&str>) -> SearchAtom {
+        SearchAtom::Tag(Tag {
+            name: crate::query::TagItem::parse(name).unwrap(),
+            value: value.map(|v| crate::query::TagItem::parse(v).unwrap()),
+        })
     }
 
     fn like_values(patterns: &[&str]) -> sea_query::Values {
@@ -311,6 +417,67 @@ mod tests {
         assert_eq!(
             sql,
             r#"SELECT "scores"."id" AS "score_id" FROM "scores" EXCEPT SELECT "wrapped_scores"."score_id" AS "score_id" FROM (SELECT DISTINCT "titles"."score_id" AS "score_id" FROM "title_words" AS "title_words_0" INNER JOIN "titles" ON "titles"."id" = "title_words_0"."title_id" WHERE "title_words_0"."word" LIKE ? ESCAPE '\') AS "wrapped_scores""#
+        );
+    }
+
+    #[test]
+    fn single_component_person_atom_is_one_self_joinless_select() {
+        let (sql, values) = compile(ScoreQuery::Atom(person_atom(&["Anna"])));
+        assert_eq!(
+            sql,
+            r#"SELECT DISTINCT "score_people"."score_id" AS "score_id" FROM "person_words" AS "person_words_0" INNER JOIN "score_people" ON "score_people"."person_id" = "person_words_0"."person_id" WHERE "person_words_0"."word" LIKE ? ESCAPE '\'"#
+        );
+        assert_eq!(values, like_values(&["anna%"]));
+    }
+
+    #[test]
+    fn multi_component_person_atom_self_joins_person_words_once_per_extra_component() {
+        let (sql, values) = compile(ScoreQuery::Atom(person_atom(&["Johann", "Bach"])));
+        assert_eq!(
+            sql,
+            r#"SELECT DISTINCT "score_people"."score_id" AS "score_id" FROM "person_words" AS "person_words_0" INNER JOIN "score_people" ON "score_people"."person_id" = "person_words_0"."person_id" INNER JOIN "person_words" AS "person_words_1" ON "person_words_1"."person_id" = "person_words_0"."person_id" WHERE "person_words_0"."word" LIKE ? ESCAPE '\' AND "person_words_1"."word" LIKE ? ESCAPE '\'"#
+        );
+        assert_eq!(values, like_values(&["johann%", "bach%"]));
+    }
+
+    #[test]
+    fn tag_atom_without_value_matches_on_name_only() {
+        let (sql, values) = compile(ScoreQuery::Atom(tag_atom("sacred", None)));
+        assert_eq!(
+            sql,
+            r#"SELECT DISTINCT "score_tags"."score_id" AS "score_id" FROM "tags" INNER JOIN "score_tags" ON "score_tags"."tag_id" = "tags"."id" WHERE "tags"."name_normalized" LIKE ? ESCAPE '\'"#
+        );
+        assert_eq!(values, like_values(&["sacred%"]));
+    }
+
+    #[test]
+    fn tag_atom_with_value_matches_on_name_and_value() {
+        let (sql, values) = compile(ScoreQuery::Atom(tag_atom("key", Some("CMajor"))));
+        assert_eq!(
+            sql,
+            r#"SELECT DISTINCT "score_tags"."score_id" AS "score_id" FROM "tags" INNER JOIN "score_tags" ON "score_tags"."tag_id" = "tags"."id" WHERE "tags"."name_normalized" LIKE ? ESCAPE '\' AND "score_tags"."value_normalized" LIKE ? ESCAPE '\'"#
+        );
+        assert_eq!(values, like_values(&["key%", "cmajor%"]));
+    }
+
+    #[test]
+    fn person_and_tag_atoms_compose_with_and_without_wrapping() {
+        let (sql, _values) = compile(ScoreQuery::And(vec![
+            AndQuery::Atom(person_atom(&["Anna"])),
+            AndQuery::Atom(tag_atom("sacred", None)),
+        ]));
+        assert_eq!(
+            sql,
+            r#"SELECT DISTINCT "score_people"."score_id" AS "score_id" FROM "person_words" AS "person_words_0" INNER JOIN "score_people" ON "score_people"."person_id" = "person_words_0"."person_id" WHERE "person_words_0"."word" LIKE ? ESCAPE '\' INTERSECT SELECT DISTINCT "score_tags"."score_id" AS "score_id" FROM "tags" INNER JOIN "score_tags" ON "score_tags"."tag_id" = "tags"."id" WHERE "tags"."name_normalized" LIKE ? ESCAPE '\'"#
+        );
+    }
+
+    #[test]
+    fn not_wraps_a_person_atom_the_same_as_a_title_atom() {
+        let (sql, _values) = compile(ScoreQuery::Not(NotQuery::Atom(person_atom(&["Anna"]))));
+        assert_eq!(
+            sql,
+            r#"SELECT "scores"."id" AS "score_id" FROM "scores" EXCEPT SELECT "wrapped_scores"."score_id" AS "score_id" FROM (SELECT DISTINCT "score_people"."score_id" AS "score_id" FROM "person_words" AS "person_words_0" INNER JOIN "score_people" ON "score_people"."person_id" = "person_words_0"."person_id" WHERE "person_words_0"."word" LIKE ? ESCAPE '\') AS "wrapped_scores""#
         );
     }
 

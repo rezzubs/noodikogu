@@ -290,7 +290,7 @@ fn compile_tag(tag: &Tag) -> SelectStatement {
 /// since `word` is arbitrary user-typed text and those three characters
 /// would otherwise be interpreted as LIKE wildcards / the escape
 /// introducer rather than literal characters to match.
-fn prefix_match(column: impl IntoColumnRef, word: &str) -> Expr {
+pub(super) fn prefix_match(column: impl IntoColumnRef, word: &str) -> Expr {
     Expr::col(column).like(LikeExpr::new(escape_prefix_pattern(word)).escape('\\'))
 }
 

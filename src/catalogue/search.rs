@@ -1,10 +1,12 @@
 //! Evaluates `crate::query::ScoreQuery` against the catalogue.
 
 mod eval;
+mod rank;
 
 use super::schema::Titles;
 use super::{Catalogue, DatabaseError, ScoreId, params};
 use crate::query::ScoreQuery;
+use rank::TitleRanking;
 use sea_query::{Alias, Expr, ExprTrait, Order, Query, SqliteQueryBuilder};
 
 /// A page window into a result set. Both fields are `u64` (matching what
@@ -40,9 +42,11 @@ impl From<turso::Error> for SearchError {
 }
 
 impl Catalogue {
-    /// Evaluates `query` and returns one page of matching scores, sorted
-    /// alphabetically (case/diacritic-insensitively) by primary title.
-    /// Relevance ranking is deferred
+    /// Evaluates `query` and returns one page of matching scores.
+    ///
+    /// The scores are ranked by how well each score's primary title matches the
+    /// query's free-text `Title` portion, falling back to alphabetical order
+    /// (case/diacritic-insensitively, by primary title) as the tie-breaker.
     ///
     /// # Errors
     ///
@@ -54,8 +58,9 @@ impl Catalogue {
     ) -> Result<Vec<ScoreSummary>, SearchError> {
         let conn = self.connect().await?;
 
+        let ranking = TitleRanking::from_query(&query);
         let ids = eval::compile_score_query(query);
-        let hydrated = hydrate(ids, pagination);
+        let hydrated = hydrate(ids, ranking, pagination);
         let (sql, values) = hydrated.build(SqliteQueryBuilder);
         let params = params::to_turso_values(values);
 
@@ -72,18 +77,25 @@ impl Catalogue {
 }
 
 /// Joins a compiled score-id set back to each score's primary title,
-/// sorts alphabetically, and applies `pagination`.
+/// sorts alphabetically or by [`TitleRanking`], and applies `pagination`.
 ///
 /// Relies on every score having exactly one primary title at all times
 /// (guaranteed by `create_score` and `set_primary_title`; `remove_title`
 /// refuses to remove a score's current primary title rather than leaving
 /// this unsatisfied - see `title.rs`). If that invariant were ever
 /// violated, the affected score would silently drop out of results.
-fn hydrate(ids: sea_query::SelectStatement, pagination: Pagination) -> sea_query::SelectStatement {
+fn hydrate(
+    ids: sea_query::SelectStatement,
+    ranking: Option<TitleRanking>,
+    pagination: Pagination,
+) -> sea_query::SelectStatement {
     let matches = Alias::new("matches");
-    Query::select()
+    let score_id = Alias::new("score_id");
+
+    let mut select = Query::select();
+    select
         .expr_as(
-            Expr::col((matches.clone(), Alias::new("score_id"))),
+            Expr::col((matches.clone(), score_id.clone())),
             Alias::new("id"),
         )
         .expr_as(
@@ -94,9 +106,15 @@ fn hydrate(ids: sea_query::SelectStatement, pagination: Pagination) -> sea_query
         .inner_join(
             Titles::Table,
             Expr::col((Titles::Table, Titles::ScoreId))
-                .equals((matches, Alias::new("score_id")))
+                .equals((matches, score_id))
                 .and(Expr::col((Titles::Table, Titles::IsPrimary)).eq(1)),
-        )
+        );
+
+    if let Some(ranking) = ranking {
+        select.order_by_expr(ranking.expr(), Order::Desc);
+    }
+
+    select
         .order_by((Titles::Table, Titles::ValueNormalized), Order::Asc)
         .limit(pagination.limit)
         .offset(pagination.offset)
@@ -551,5 +569,75 @@ mod tests {
             },
         ]);
         assert_eq!(titles_for(&catalogue, query).await, vec!["Ave Maria"]);
+    }
+
+    /// Alphabetically `"Ave Maria"` sorts before `"Maria"`, so this only
+    /// passes if the exact-whole-title-match boost outranks it.
+    #[tokio::test]
+    async fn exact_whole_title_match_ranks_above_a_title_that_merely_contains_the_word() {
+        let catalogue = seeded_catalogue(&["Maria", "Ave Maria"]).await;
+        assert_eq!(
+            titles_for(&catalogue, atom("Maria")).await,
+            vec!["Maria", "Ave Maria"]
+        );
+    }
+
+    /// Alphabetically `"Alpha Ave"` sorts before `"Ave Verum"`, so this
+    /// only passes if the prefix-of-whole-title boost outranks it.
+    #[tokio::test]
+    async fn prefix_of_whole_title_ranks_above_a_non_prefix_match_that_sorts_earlier() {
+        let catalogue = seeded_catalogue(&["Alpha Ave", "Ave Verum"]).await;
+        assert_eq!(
+            titles_for(&catalogue, atom("Ave")).await,
+            vec!["Ave Verum", "Alpha Ave"]
+        );
+    }
+
+    #[tokio::test]
+    async fn more_distinct_matched_words_ranks_higher() {
+        let catalogue = seeded_catalogue(&["Ave Verum", "Maria Callas", "Ave Maria"]).await;
+        let query = ScoreQuery::Or(vec![
+            OrQuery::Atom(SearchAtom::Title("ave".to_string())),
+            OrQuery::Atom(SearchAtom::Title("maria".to_string())),
+        ]);
+        assert_eq!(
+            titles_for(&catalogue, query).await,
+            vec!["Ave Maria", "Ave Verum", "Maria Callas"]
+        );
+    }
+
+    /// Neither title's *whole* value starts with "mar", so the boost tier
+    /// doesn't apply to either - this isolates the word-match-quality
+    /// component: "mars" (4 letters) is a 3/4 match, "marseille" (9
+    /// letters) only a 3/9 match. A flat word-count scheme would tie both
+    /// at "1 word matched" and fall back to alphabetical order (`"Ave
+    /// Marseille"` first) - this only passes if match quality is weighed.
+    #[tokio::test]
+    async fn a_more_complete_word_match_ranks_above_a_shorter_partial_match() {
+        let catalogue = seeded_catalogue(&["Ave Marseille", "Total Mars"]).await;
+        assert_eq!(
+            titles_for(&catalogue, atom("mar")).await,
+            vec!["Total Mars", "Ave Marseille"]
+        );
+    }
+
+    #[tokio::test]
+    async fn person_only_query_keeps_alphabetical_order_with_no_ranking_signal() {
+        let catalogue = seeded_catalogue(&["Zebra Song", "Alpha Song"]).await;
+        let zebra_id = catalogue.search(atom("Zebra"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+        let alpha_id = catalogue.search(atom("Alpha"), full_page()).await.unwrap()[0]
+            .id
+            .0;
+
+        let anna = insert_person(&catalogue, &["Anna"]).await;
+        attach_person_to_score(&catalogue, zebra_id, anna).await;
+        attach_person_to_score(&catalogue, alpha_id, anna).await;
+
+        assert_eq!(
+            titles_for(&catalogue, person_atom(&["Anna"])).await,
+            vec!["Alpha Song", "Zebra Song"]
+        );
     }
 }

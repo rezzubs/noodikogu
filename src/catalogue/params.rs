@@ -17,6 +17,9 @@
 /// - `Int` - small integer literals (e.g. `is_primary = 1`).
 /// - `BigInt` - `i64` ids (`ScoreId`/`TitleId`, `last_insert_rowid()`).
 /// - `BigUnsigned` - `SelectStatement::limit`/`.offset` (both take `u64`).
+/// - `Double` - the `search/rank.rs` word-match-quality expression's
+///   floating-point literals (e.g. the `0.0` fallback for "word didn't
+///   match at all").
 ///
 /// If this crate starts binding a new kind of value, extend this function
 /// to cover it.
@@ -36,6 +39,7 @@ fn to_turso_value(value: sea_query::Value) -> turso::Value {
                 i64::try_from(i).expect("only ever binds BigUnsigned for LIMIT/OFFSET"),
             )
         }),
+        sea_query::Value::Double(f) => f.map_or(turso::Value::Null, turso::Value::Real),
         other => unreachable!(
             "query-building never binds a {other:?} value; extend this function if that changes"
         ),
@@ -47,13 +51,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn converts_string_int_bigint_bigunsigned() {
+    fn converts_string_int_bigint_bigunsigned_double() {
         let values = sea_query::Values(vec![
             sea_query::Value::String(Some("ave%".to_string())),
             sea_query::Value::Int(Some(1)),
             sea_query::Value::BigInt(Some(42)),
             sea_query::Value::BigUnsigned(Some(10)),
+            sea_query::Value::Double(Some(0.5)),
             sea_query::Value::String(None),
+            sea_query::Value::Double(None),
         ]);
 
         assert_eq!(
@@ -63,6 +69,8 @@ mod tests {
                 turso::Value::Integer(1),
                 turso::Value::Integer(42),
                 turso::Value::Integer(10),
+                turso::Value::Real(0.5),
+                turso::Value::Null,
                 turso::Value::Null,
             ]
         );

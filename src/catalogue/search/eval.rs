@@ -322,7 +322,10 @@ mod tests {
     #[test]
     fn mixed_operators_wrap_each_differently_operated_child() {
         let (sql, _values) = compile(ScoreQuery::And(vec![
-            AndQuery::Or(vec![OrQuery::Atom(atom("ave")), OrQuery::Atom(atom("nope"))]),
+            AndQuery::Or(vec![
+                OrQuery::Atom(atom("ave")),
+                OrQuery::Atom(atom("nope")),
+            ]),
             AndQuery::Not(NotQuery::Atom(atom("verum"))),
         ]));
         assert_eq!(

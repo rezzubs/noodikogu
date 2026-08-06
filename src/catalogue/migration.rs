@@ -60,7 +60,10 @@ pub(crate) const ALL: &[Migration] = &[m0001_scores_and_titles::MIGRATION];
 /// Each migration runs inside its own transaction. If `apply` returns
 /// `Err`, the `Transaction` guard rolls back on drop (no manual `ROLLBACK`
 /// needed) and `user_version` is left unchanged for that migration.
-pub(crate) async fn run(conn: &mut Connection, migrations: &[Migration]) -> Result<(), DatabaseError> {
+pub(crate) async fn run(
+    conn: &mut Connection,
+    migrations: &[Migration],
+) -> Result<(), DatabaseError> {
     let current = user_version(conn).await?;
     tracing::debug!(current, "checking for pending migrations");
 

@@ -348,7 +348,10 @@ async fn title_lookup(
 }
 
 /// How many titles `score_id` currently has.
-async fn title_count(tx: &turso::transaction::Transaction<'_>, score_id: ScoreId) -> Result<i64, DatabaseError> {
+async fn title_count(
+    tx: &turso::transaction::Transaction<'_>,
+    score_id: ScoreId,
+) -> Result<i64, DatabaseError> {
     let (sql, values) = Query::select()
         .expr(Expr::col(Titles::Id).count())
         .from(Titles::Table)
@@ -390,10 +393,7 @@ mod tests {
     #[tokio::test]
     async fn add_title_creates_alternate_title() {
         let catalogue = test_catalogue().await;
-        let score_id = catalogue
-            .create_score(title("Ave Maria"))
-            .await
-            .unwrap();
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
         let title_id = catalogue
             .add_title(score_id, title("Ave Maria (alt)"))
             .await
@@ -422,10 +422,7 @@ mod tests {
     #[tokio::test]
     async fn set_primary_title_swaps_primary_flag() {
         let catalogue = test_catalogue().await;
-        let score_id = catalogue
-            .create_score(title("Ave Maria"))
-            .await
-            .unwrap();
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
         let alt_id = catalogue
             .add_title(score_id, title("Ave Maria (alt)"))
             .await
@@ -448,10 +445,7 @@ mod tests {
     #[tokio::test]
     async fn update_title_value_recomputes_title_words() {
         let catalogue = test_catalogue().await;
-        let score_id = catalogue
-            .create_score(title("Ave Maria"))
-            .await
-            .unwrap();
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
         let conn = catalogue.connect().await.unwrap();
         let mut rows = conn
             .query("SELECT id FROM titles WHERE score_id = ?", (score_id.0,))
@@ -465,7 +459,10 @@ mod tests {
             .await
             .unwrap();
 
-        let mut rows = conn.query("SELECT word FROM title_words", ()).await.unwrap();
+        let mut rows = conn
+            .query("SELECT word FROM title_words", ())
+            .await
+            .unwrap();
         let mut found = Vec::new();
         while let Some(row) = rows.next().await.unwrap() {
             found.push(row.get::<String>(0).unwrap());
@@ -489,10 +486,7 @@ mod tests {
     #[tokio::test]
     async fn remove_title_rejects_last_title() {
         let catalogue = test_catalogue().await;
-        let score_id = catalogue
-            .create_score(title("Ave Maria"))
-            .await
-            .unwrap();
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
         let conn = catalogue.connect().await.unwrap();
         let mut rows = conn
             .query("SELECT id FROM titles WHERE score_id = ?", (score_id.0,))
@@ -509,10 +503,7 @@ mod tests {
     #[tokio::test]
     async fn remove_title_rejects_removing_primary_title_when_alternates_exist() {
         let catalogue = test_catalogue().await;
-        let score_id = catalogue
-            .create_score(title("Ave Maria"))
-            .await
-            .unwrap();
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
         catalogue
             .add_title(score_id, title("Ave Maria (alt)"))
             .await
@@ -537,10 +528,7 @@ mod tests {
     #[tokio::test]
     async fn remove_title_deletes_non_primary_title() {
         let catalogue = test_catalogue().await;
-        let score_id = catalogue
-            .create_score(title("Ave Maria"))
-            .await
-            .unwrap();
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
         let alt_id = catalogue
             .add_title(score_id, title("Ave Maria (alt)"))
             .await

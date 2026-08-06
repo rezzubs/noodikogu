@@ -16,7 +16,9 @@ mod title;
 pub use error::DatabaseError;
 pub use id::{PersonId, ScoreId, TagId, TitleId};
 pub use person::{AttachPersonError, CreatePersonError, DeletePersonError, DetachPersonError};
-pub use score::{DeleteScoreError, SetDescriptionError};
+pub use score::{
+    DeleteScoreError, PersonDetail, ScoreDetail, ScoreDetailError, SetDescriptionError, TagDetail,
+};
 pub use search::{Pagination, ScoreSummary, SearchError};
 pub use tag::{AttachTagError, CreateTagError, DeleteTagError, DetachTagError};
 pub use title::{

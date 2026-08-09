@@ -7,6 +7,7 @@ mod migration;
 mod normalize;
 mod params;
 mod person;
+mod role;
 mod schema;
 mod score;
 mod search;
@@ -14,10 +15,15 @@ mod tag;
 mod title;
 
 pub use error::DatabaseError;
-pub use id::{PersonId, ScoreId, TagId, TitleId};
+pub use id::{PersonId, RoleId, ScoreId, TagId, TitleId};
 pub use person::{AttachPersonError, CreatePersonError, DeletePersonError, DetachPersonError};
+pub use role::{
+    AttachRoleError, CreateRoleError, DeleteRoleError, DetachRoleError, EmptyRoleNameError,
+    RenameRoleError, RoleName,
+};
 pub use score::{
-    DeleteScoreError, PersonDetail, ScoreDetail, ScoreDetailError, SetDescriptionError, TagDetail,
+    DeleteScoreError, PersonDetail, RoleDetail, ScoreDetail, ScoreDetailError,
+    SetDescriptionError, TagDetail,
 };
 pub use search::{Pagination, ScoreSummary};
 pub use tag::{AttachTagError, CreateTagError, DeleteTagError, DetachTagError};

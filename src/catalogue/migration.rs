@@ -2,6 +2,7 @@
 
 mod m0001_scores_and_titles;
 mod m0002_people_and_tags;
+mod m0003_roles;
 
 use super::{DatabaseError, query_one};
 use std::future::Future;
@@ -55,6 +56,7 @@ pub(crate) struct Migration {
 pub(crate) const ALL: &[Migration] = &[
     m0001_scores_and_titles::MIGRATION,
     m0002_people_and_tags::MIGRATION,
+    m0003_roles::MIGRATION,
 ];
 
 /// Brings `conn`'s database up to date by applying every migration in

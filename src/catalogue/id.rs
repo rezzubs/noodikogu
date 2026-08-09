@@ -74,6 +74,22 @@ impl From<TagId> for turso::Value {
     }
 }
 
+/// The id of a row in the `roles` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RoleId(pub i64);
+
+impl fmt::Display for RoleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<RoleId> for turso::Value {
+    fn from(id: RoleId) -> Self {
+        turso::Value::Integer(id.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +112,10 @@ mod tests {
     #[test]
     fn tag_id_displays_as_raw_integer() {
         assert_eq!(TagId(9).to_string(), "9");
+    }
+
+    #[test]
+    fn role_id_displays_as_raw_integer() {
+        assert_eq!(RoleId(5).to_string(), "5");
     }
 }

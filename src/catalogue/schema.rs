@@ -67,3 +67,19 @@ pub(super) enum ScoreTags {
     Value,
     ValueNormalized,
 }
+
+#[derive(sea_query::Iden)]
+pub(super) enum Roles {
+    Table,
+    Id,
+    Name,
+    NameKey,
+}
+
+#[derive(sea_query::Iden)]
+pub(super) enum ScorePersonRoles {
+    Table,
+    ScoreId,
+    PersonId,
+    RoleId,
+}

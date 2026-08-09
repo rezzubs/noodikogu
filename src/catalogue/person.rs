@@ -281,7 +281,9 @@ async fn person_lookup_by_display_name_key(
 }
 
 /// `true` if `person_id` is attached to `score_id` via `score_people`.
-async fn score_person_attached(
+/// `pub(super)` so `role.rs` can check this before attaching a role to a
+/// `(score, person)` pair.
+pub(super) async fn score_person_attached(
     tx: &turso::transaction::Transaction<'_>,
     score_id: ScoreId,
     person_id: PersonId,

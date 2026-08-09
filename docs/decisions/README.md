@@ -44,3 +44,6 @@ to be re-synced, it's meant to explain a choice that was made.
 - [0007](0007-tag-value-per-attachment.md) - a tag's value lives on the
   `score_tags` attachment, not the tag itself; a score may hold several
   values of the same tag, but not a valueless one alongside a valued one.
+- [0008](0008-role-name-uniqueness-key.md) - roles are deduped like people
+  (case-fold key, diacritics preserved), not like tags; a role can only
+  attach to a person already on the score, via a composite foreign key.

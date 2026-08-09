@@ -1,10 +1,15 @@
 //! Score-level modification methods: creating, describing, and deleting a
 //! score as a whole (as opposed to its titles - see `title.rs`).
 
-use super::schema::{People, ScorePeople, ScoreTags, Scores, Tags, Titles};
+use super::schema::{
+    People, Roles, ScorePeople, ScorePersonRoles, ScoreTags, Scores, Tags, Titles,
+};
 use super::title::{Title, insert_title};
-use super::{Catalogue, DatabaseError, PersonId, ScoreId, TagId, TitleId, params, query_one};
+use super::{
+    Catalogue, DatabaseError, PersonId, RoleId, ScoreId, TagId, TitleId, params, query_one,
+};
 use sea_query::{Expr, ExprTrait, Order, Query, SqliteQueryBuilder};
+use std::collections::HashMap;
 use turso::Connection;
 
 /// Errors from [`Catalogue::set_description`].
@@ -57,6 +62,15 @@ pub struct ScoreDetail {
 pub struct PersonDetail {
     pub id: PersonId,
     pub display_name: String,
+    pub roles: Vec<RoleDetail>,
+}
+
+/// One role attached to a person on a score, as returned in
+/// [`PersonDetail::roles`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleDetail {
+    pub id: RoleId,
+    pub name: String,
 }
 
 /// One tag attached to a score, as returned in [`ScoreDetail::tags`].
@@ -287,8 +301,17 @@ impl Catalogue {
             people.push(PersonDetail {
                 id: PersonId(row.get::<i64>(0)?),
                 display_name: row.get::<String>(1)?,
+                roles: Vec::new(),
             });
         }
+
+        let mut roles_by_person = score_person_roles(&conn, score_id).await?;
+        for person in &mut people {
+            if let Some(roles) = roles_by_person.remove(&person.id) {
+                person.roles = roles;
+            }
+        }
+
         Ok(people)
     }
 
@@ -387,6 +410,42 @@ pub(super) async fn score_exists(
         .build(SqliteQueryBuilder);
     let mut rows = tx.query(&sql, params::to_turso_values(values)).await?;
     Ok(query_one(&mut rows).await?.is_some())
+}
+
+/// Every role attached to any person on `score_id`, grouped by
+/// [`PersonId`], ordered by role name within each person. A separate
+/// follow-up query rather than a join into [`Catalogue::score_people`]'s
+/// own `SELECT`, so that query's existing shape (and `score_tags`'s
+/// unrelated one) stay untouched.
+async fn score_person_roles(
+    conn: &Connection,
+    score_id: ScoreId,
+) -> Result<HashMap<PersonId, Vec<RoleDetail>>, DatabaseError> {
+    let (sql, values) = Query::select()
+        .column((ScorePersonRoles::Table, ScorePersonRoles::PersonId))
+        .column((Roles::Table, Roles::Id))
+        .column((Roles::Table, Roles::Name))
+        .from(ScorePersonRoles::Table)
+        .inner_join(
+            Roles::Table,
+            Expr::col((Roles::Table, Roles::Id))
+                .equals((ScorePersonRoles::Table, ScorePersonRoles::RoleId)),
+        )
+        .and_where(Expr::col((ScorePersonRoles::Table, ScorePersonRoles::ScoreId)).eq(score_id.0))
+        .order_by((Roles::Table, Roles::Name), Order::Asc)
+        .build(SqliteQueryBuilder);
+    let mut rows = conn.query(&sql, params::to_turso_values(values)).await?;
+
+    let mut roles_by_person: HashMap<PersonId, Vec<RoleDetail>> = HashMap::new();
+    while let Some(row) = rows.next().await? {
+        let person_id = PersonId(row.get::<i64>(0)?);
+        let role = RoleDetail {
+            id: RoleId(row.get::<i64>(1)?),
+            name: row.get::<String>(2)?,
+        };
+        roles_by_person.entry(person_id).or_default().push(role);
+    }
+    Ok(roles_by_person)
 }
 
 /// `true` if `score_id` exists. Connection-based counterpart to
@@ -572,6 +631,70 @@ mod tests {
         assert_eq!(catalogue.score_people(score_id).await.unwrap(), Vec::new());
     }
 
+    /// A person with no roles attached gets an empty `Vec`, not omitted
+    /// entirely - this is what would fail if `score_person_roles`'s
+    /// `HashMap` lookup were ever changed to skip absent entries instead of
+    /// defaulting.
+    #[tokio::test]
+    async fn score_people_returns_empty_roles_for_a_person_with_no_roles() {
+        let catalogue = test_catalogue().await;
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
+        let person_id = catalogue.create_person(&[name("Anna")]).await.unwrap();
+        catalogue.attach_person(score_id, person_id).await.unwrap();
+
+        let people = catalogue.score_people(score_id).await.unwrap();
+
+        assert_eq!(people, vec![PersonDetail {
+            id: person_id,
+            display_name: "Anna".to_string(),
+            roles: Vec::new(),
+        }]);
+    }
+
+    #[tokio::test]
+    async fn score_people_includes_attached_roles_ordered_by_name() {
+        let catalogue = test_catalogue().await;
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
+        let person_id = catalogue.create_person(&[name("Anna")]).await.unwrap();
+        catalogue.attach_person(score_id, person_id).await.unwrap();
+        let composer_id = catalogue
+            .create_role("Composer".parse().unwrap())
+            .await
+            .unwrap();
+        let arranger_id = catalogue
+            .create_role("Arranger".parse().unwrap())
+            .await
+            .unwrap();
+        catalogue
+            .attach_role(score_id, person_id, composer_id)
+            .await
+            .unwrap();
+        catalogue
+            .attach_role(score_id, person_id, arranger_id)
+            .await
+            .unwrap();
+
+        let people = catalogue.score_people(score_id).await.unwrap();
+
+        assert_eq!(
+            people,
+            vec![PersonDetail {
+                id: person_id,
+                display_name: "Anna".to_string(),
+                roles: vec![
+                    RoleDetail {
+                        id: arranger_id,
+                        name: "Arranger".to_string(),
+                    },
+                    RoleDetail {
+                        id: composer_id,
+                        name: "Composer".to_string(),
+                    },
+                ],
+            }]
+        );
+    }
+
     #[tokio::test]
     async fn score_people_rejects_missing_score() {
         let catalogue = test_catalogue().await;
@@ -654,6 +777,37 @@ mod tests {
             vec![PersonDetail {
                 id: person_id,
                 display_name: "Anna".to_string(),
+                roles: Vec::new(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn score_detail_includes_attached_person_roles() {
+        let catalogue = test_catalogue().await;
+        let score_id = catalogue.create_score(title("Ave Maria")).await.unwrap();
+        let person_id = catalogue.create_person(&[name("Anna")]).await.unwrap();
+        catalogue.attach_person(score_id, person_id).await.unwrap();
+        let role_id = catalogue
+            .create_role("Composer".parse().unwrap())
+            .await
+            .unwrap();
+        catalogue
+            .attach_role(score_id, person_id, role_id)
+            .await
+            .unwrap();
+
+        let detail = catalogue.score_detail(score_id).await.unwrap();
+
+        assert_eq!(
+            detail.people,
+            vec![PersonDetail {
+                id: person_id,
+                display_name: "Anna".to_string(),
+                roles: vec![RoleDetail {
+                    id: role_id,
+                    name: "Composer".to_string(),
+                }],
             }]
         );
     }

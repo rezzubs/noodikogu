@@ -1,12 +1,13 @@
 #![allow(
     dead_code,
-    reason = "nothing outside tests calls into the library yet; remove once the CLI/web server wire it up"
+    reason = "not every Catalogue method is called outside tests yet; remove once the TUI/web server wire up the rest"
 )]
 #![cfg_attr(
     test,
     allow(clippy::unwrap_used, reason = "unwrap is fine in test code")
 )]
 pub mod catalogue;
+pub mod import;
 
 #[allow(
     clippy::pedantic,

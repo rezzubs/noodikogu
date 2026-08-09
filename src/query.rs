@@ -217,7 +217,7 @@ impl FromStr for PersonName {
         if s.is_empty() {
             return Err(PersonNameError::Empty);
         }
-        if let Some(c) = s.chars().find(|c| !c.is_alphabetic()) {
+        if let Some(c) = s.chars().find(|c| !c.is_alphabetic() && *c != '-') {
             return Err(PersonNameError::InvalidChar(c));
         }
         Ok(PersonName(s.to_owned()))

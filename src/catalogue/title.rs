@@ -58,12 +58,12 @@ pub enum AddTitleError {
     #[error("score {0} does not exist")]
     ScoreNotFound(ScoreId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for AddTitleError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -73,12 +73,12 @@ pub enum SetPrimaryTitleError {
     #[error("title {0} does not exist")]
     TitleNotFound(TitleId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for SetPrimaryTitleError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -88,12 +88,12 @@ pub enum UpdateTitleValueError {
     #[error("title {0} does not exist")]
     TitleNotFound(TitleId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for UpdateTitleValueError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -107,12 +107,12 @@ pub enum RemoveTitleError {
     #[error("cannot remove score {0}'s primary title; set a different primary title first")]
     CannotRemovePrimaryTitle(ScoreId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for RemoveTitleError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -122,7 +122,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`AddTitleError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`AddTitleError::Db`] on an underlying database failure.
+    /// exist, or [`AddTitleError::Unexpected`] on an underlying database failure.
     pub async fn add_title(
         &self,
         score_id: ScoreId,
@@ -154,7 +154,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`SetPrimaryTitleError::TitleNotFound`] if `title_id`
-    /// doesn't exist, or [`SetPrimaryTitleError::Db`] on an underlying
+    /// doesn't exist, or [`SetPrimaryTitleError::Unexpected`] on an underlying
     /// database failure.
     pub async fn set_primary_title(
         &self,
@@ -197,7 +197,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`UpdateTitleValueError::TitleNotFound`] if `title_id`
-    /// doesn't exist, or [`UpdateTitleValueError::Db`] on an underlying
+    /// doesn't exist, or [`UpdateTitleValueError::Unexpected`] on an underlying
     /// database failure.
     pub async fn update_title_value(
         &self,
@@ -245,7 +245,7 @@ impl Catalogue {
     /// Returns [`RemoveTitleError::TitleNotFound`] if `title_id` doesn't
     /// exist, [`RemoveTitleError::CannotRemoveLastTitle`] or
     /// [`RemoveTitleError::CannotRemovePrimaryTitle`] per the rules above,
-    /// or [`RemoveTitleError::Db`] on an underlying database failure.
+    /// or [`RemoveTitleError::Unexpected`] on an underlying database failure.
     ///
     /// # Panics
     ///

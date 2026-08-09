@@ -13,12 +13,12 @@ pub enum SetDescriptionError {
     #[error("score {0} does not exist")]
     ScoreNotFound(ScoreId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for SetDescriptionError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -28,12 +28,12 @@ pub enum DeleteScoreError {
     #[error("score {0} does not exist")]
     ScoreNotFound(ScoreId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for DeleteScoreError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -80,12 +80,12 @@ pub enum ScoreDetailError {
     #[error("score {0} does not exist")]
     ScoreNotFound(ScoreId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for ScoreDetailError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -123,7 +123,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`SetDescriptionError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`SetDescriptionError::Db`] on an underlying database
+    /// exist, or [`SetDescriptionError::Unexpected`] on an underlying database
     /// failure.
     pub async fn set_description(
         &self,
@@ -156,7 +156,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`DeleteScoreError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`DeleteScoreError::Db`] on an underlying database
+    /// exist, or [`DeleteScoreError::Unexpected`] on an underlying database
     /// failure.
     pub async fn delete_score(&self, score_id: ScoreId) -> Result<ScoreId, DeleteScoreError> {
         let mut conn = self.connect().await?;
@@ -184,7 +184,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`ScoreDetailError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`ScoreDetailError::Db`] on an underlying database
+    /// exist, or [`ScoreDetailError::Unexpected`] on an underlying database
     /// failure.
     pub async fn score_description(
         &self,
@@ -210,7 +210,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`ScoreDetailError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`ScoreDetailError::Db`] on an underlying database
+    /// exist, or [`ScoreDetailError::Unexpected`] on an underlying database
     /// failure.
     pub async fn score_titles(
         &self,
@@ -253,7 +253,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`ScoreDetailError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`ScoreDetailError::Db`] on an underlying database
+    /// exist, or [`ScoreDetailError::Unexpected`] on an underlying database
     /// failure.
     pub async fn score_people(
         &self,
@@ -302,7 +302,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`ScoreDetailError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`ScoreDetailError::Db`] on an underlying database
+    /// exist, or [`ScoreDetailError::Unexpected`] on an underlying database
     /// failure.
     pub async fn score_tags(&self, score_id: ScoreId) -> Result<Vec<TagDetail>, ScoreDetailError> {
         let conn = self.connect().await?;
@@ -350,7 +350,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`ScoreDetailError::ScoreNotFound`] if `score_id` doesn't
-    /// exist, or [`ScoreDetailError::Db`] on an underlying database
+    /// exist, or [`ScoreDetailError::Unexpected`] on an underlying database
     /// failure.
     pub async fn score_detail(&self, score_id: ScoreId) -> Result<ScoreDetail, ScoreDetailError> {
         let description = self.score_description(score_id).await?;

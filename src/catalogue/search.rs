@@ -28,19 +28,6 @@ pub struct ScoreSummary {
     pub primary_title: String,
 }
 
-/// Errors from [`Catalogue::search`].
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum SearchError {
-    #[error(transparent)]
-    Db(#[from] DatabaseError),
-}
-
-impl From<turso::Error> for SearchError {
-    fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
-    }
-}
-
 impl Catalogue {
     /// Evaluates `query` and returns one page of matching scores.
     ///
@@ -50,12 +37,12 @@ impl Catalogue {
     ///
     /// # Errors
     ///
-    /// Returns [`SearchError::Db`] on an underlying database failure.
+    /// Returns [`DatabaseError`] on an underlying database failure.
     pub async fn search(
         &self,
         query: ScoreQuery,
         pagination: Pagination,
-    ) -> Result<Vec<ScoreSummary>, SearchError> {
+    ) -> Result<Vec<ScoreSummary>, DatabaseError> {
         let conn = self.connect().await?;
 
         let ranking = TitleRanking::from_query(&query);

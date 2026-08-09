@@ -17,12 +17,12 @@ pub enum CreatePersonError {
     #[error("a person with this name already exists: {0}")]
     AlreadyExists(PersonId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for CreatePersonError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -32,12 +32,12 @@ pub enum DeletePersonError {
     #[error("person {0} does not exist")]
     PersonNotFound(PersonId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for DeletePersonError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -51,12 +51,12 @@ pub enum AttachPersonError {
     #[error("person {1} is already attached to score {0}")]
     AlreadyAttached(ScoreId, PersonId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for AttachPersonError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -70,12 +70,12 @@ pub enum DetachPersonError {
     #[error("person {1} is not attached to score {0}")]
     NotAttached(ScoreId, PersonId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for DetachPersonError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -98,7 +98,7 @@ impl Catalogue {
     ///
     /// Returns [`CreatePersonError::Empty`] if `names` is empty,
     /// [`CreatePersonError::AlreadyExists`] if a person with the same
-    /// (case-folded) full name already exists, or [`CreatePersonError::Db`]
+    /// (case-folded) full name already exists, or [`CreatePersonError::Unexpected`]
     /// on an underlying database failure.
     pub async fn create_person(&self, names: &[PersonName]) -> Result<PersonId, CreatePersonError> {
         if names.is_empty() {
@@ -143,7 +143,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`DeletePersonError::PersonNotFound`] if `person_id` doesn't
-    /// exist, or [`DeletePersonError::Db`] on an underlying database
+    /// exist, or [`DeletePersonError::Unexpected`] on an underlying database
     /// failure.
     pub async fn delete_person(&self, person_id: PersonId) -> Result<PersonId, DeletePersonError> {
         let mut conn = self.connect().await?;
@@ -171,7 +171,7 @@ impl Catalogue {
     /// Returns [`AttachPersonError::ScoreNotFound`] if `score_id` doesn't
     /// exist, [`AttachPersonError::PersonNotFound`] if `person_id` doesn't
     /// exist, [`AttachPersonError::AlreadyAttached`] if the pair is already
-    /// attached, or [`AttachPersonError::Db`] on an underlying database
+    /// attached, or [`AttachPersonError::Unexpected`] on an underlying database
     /// failure.
     pub async fn attach_person(
         &self,
@@ -210,7 +210,7 @@ impl Catalogue {
     /// Returns [`DetachPersonError::ScoreNotFound`] if `score_id` doesn't
     /// exist, [`DetachPersonError::PersonNotFound`] if `person_id` doesn't
     /// exist, [`DetachPersonError::NotAttached`] if the pair isn't
-    /// attached, or [`DetachPersonError::Db`] on an underlying database
+    /// attached, or [`DetachPersonError::Unexpected`] on an underlying database
     /// failure.
     pub async fn detach_person(
         &self,

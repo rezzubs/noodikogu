@@ -19,7 +19,7 @@ pub use person::{AttachPersonError, CreatePersonError, DeletePersonError, Detach
 pub use score::{
     DeleteScoreError, PersonDetail, ScoreDetail, ScoreDetailError, SetDescriptionError, TagDetail,
 };
-pub use search::{Pagination, ScoreSummary, SearchError};
+pub use search::{Pagination, ScoreSummary};
 pub use tag::{AttachTagError, CreateTagError, DeleteTagError, DetachTagError};
 pub use title::{
     AddTitleError, EmptyTitleError, RemoveTitleError, SetPrimaryTitleError, Title,

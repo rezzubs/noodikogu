@@ -32,12 +32,12 @@ pub enum CreateTagError {
     #[error("a tag with this name already exists: {0}")]
     AlreadyExists(TagId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for CreateTagError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -47,12 +47,12 @@ pub enum DeleteTagError {
     #[error("tag {0} does not exist")]
     TagNotFound(TagId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for DeleteTagError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -75,12 +75,12 @@ pub enum AttachTagError {
     #[error("tag {1} is attached to score {0} with a value; a value is required")]
     ValueRequired(ScoreId, TagId),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for AttachTagError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -94,12 +94,12 @@ pub enum DetachTagError {
     #[error("tag {1} with this value is not attached to score {0}")]
     NotAttached(ScoreId, TagId, Option<TagItem>),
     #[error(transparent)]
-    Db(#[from] DatabaseError),
+    Unexpected(#[from] DatabaseError),
 }
 
 impl From<turso::Error> for DetachTagError {
     fn from(error: turso::Error) -> Self {
-        Self::Db(DatabaseError::from(error))
+        Self::Unexpected(DatabaseError::from(error))
     }
 }
 
@@ -114,7 +114,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`CreateTagError::AlreadyExists`] if a tag with the same
-    /// (normalized) name already exists, or [`CreateTagError::Db`] on an
+    /// (normalized) name already exists, or [`CreateTagError::Unexpected`] on an
     /// underlying database failure.
     pub async fn create_tag(&self, name: TagItem) -> Result<TagId, CreateTagError> {
         let mut conn = self.connect().await?;
@@ -145,7 +145,7 @@ impl Catalogue {
     /// # Errors
     ///
     /// Returns [`DeleteTagError::TagNotFound`] if `tag_id` doesn't exist,
-    /// or [`DeleteTagError::Db`] on an underlying database failure.
+    /// or [`DeleteTagError::Unexpected`] on an underlying database failure.
     pub async fn delete_tag(&self, tag_id: TagId) -> Result<TagId, DeleteTagError> {
         let mut conn = self.connect().await?;
         let tx = conn.transaction().await?;
@@ -185,7 +185,7 @@ impl Catalogue {
     /// [`AttachTagError::AlreadyAttached`] if this exact `(score, tag,
     /// value)` combination is already attached,
     /// [`AttachTagError::ValueRequired`] per the mutual-exclusion rule
-    /// above, or [`AttachTagError::Db`] on an underlying database failure.
+    /// above, or [`AttachTagError::Unexpected`] on an underlying database failure.
     pub async fn attach_tag(
         &self,
         score_id: ScoreId,
@@ -256,7 +256,7 @@ impl Catalogue {
     /// Returns [`DetachTagError::ScoreNotFound`] if `score_id` doesn't
     /// exist, [`DetachTagError::TagNotFound`] if `tag_id` doesn't exist,
     /// [`DetachTagError::NotAttached`] if no attachment matches `(score_id,
-    /// tag_id, value)` exactly, or [`DetachTagError::Db`] on an underlying
+    /// tag_id, value)` exactly, or [`DetachTagError::Unexpected`] on an underlying
     /// database failure.
     pub async fn detach_tag(
         &self,

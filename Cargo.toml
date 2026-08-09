@@ -44,5 +44,6 @@ sea-query = "1.0.1"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 turso = "0.6.1"
 unicode-normalization = "0.1.25"

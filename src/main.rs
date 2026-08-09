@@ -34,8 +34,22 @@ enum Commands {
     },
 }
 
+/// Installs a stderr tracing subscriber so the `tracing::info!` events
+/// already emitted by every mutating `Catalogue` method are visible.
+/// Level is controlled by `RUST_LOG` (e.g. `RUST_LOG=debug`), defaulting to
+/// `info` so catalogue modifications are logged out of the box.
+fn init_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
+}
+
 #[tokio::main]
 async fn main() {
+    init_logging();
     let cli = Cli::parse();
     match cli.command {
         Commands::DebugQuery => {

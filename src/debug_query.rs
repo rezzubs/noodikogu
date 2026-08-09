@@ -141,13 +141,11 @@ impl App {
                 self.cursor += c.len_utf8();
                 self.scroll = self.scroll.min(self.max_scroll());
             }
-            KeyCode::Backspace => {
-                if self.cursor > 0 {
-                    let prev = prev_char_boundary(&self.input, self.cursor);
-                    self.input.drain(prev..self.cursor);
-                    self.cursor = prev;
-                    self.scroll = self.scroll.min(self.max_scroll());
-                }
+            KeyCode::Backspace if self.cursor > 0 => {
+                let prev = prev_char_boundary(&self.input, self.cursor);
+                self.input.drain(prev..self.cursor);
+                self.cursor = prev;
+                self.scroll = self.scroll.min(self.max_scroll());
             }
 
             _ => {}

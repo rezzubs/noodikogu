@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Parser)]
 #[command(name = "noodikogu")]
 struct Cli {
+    /// Runs the management interface when no subcommand is given.
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 /// Available subcommands.
@@ -52,16 +53,17 @@ async fn main() {
     init_logging();
     let cli = Cli::parse();
     match cli.command {
-        Commands::DebugQuery => {
+        None => noodikogu::tui::App::new().run().await,
+        Some(Commands::DebugQuery) => {
             if let Err(e) = debug_query::run() {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }
         }
-        Commands::Import {
+        Some(Commands::Import {
             csv_path,
             database_path,
-        } => {
+        }) => {
             if let Err(e) = run_import_csv(&csv_path, &database_path).await {
                 eprintln!("error: {e}");
                 std::process::exit(1);

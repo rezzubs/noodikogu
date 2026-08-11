@@ -39,6 +39,16 @@ workspace = true
 [dependencies]
 chrono = "0.4.45"
 clap = { version = "4.6.0", features = ["derive"] }
+# Present only to turn on `event-stream`, which gates crossterm's async
+# `EventStream`. Cargo unifies features per crate version, so enabling it
+# here also enables it on the instance ratatui already depends on, which is
+# why the code keeps reaching crossterm through `ratatui::crossterm` rather
+# than this dependency. Going through the re-export means the version can
+# never drift out of step with ratatui's and leave two crossterms both
+# reading stdin.
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+# `StreamExt::next`, for polling the crossterm event stream.
+futures-util = "0.3.32"
 ratatui = "0.30.0"
 sea-query = "1.0.1"
 thiserror = "2.0.18"

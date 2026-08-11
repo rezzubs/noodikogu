@@ -14,3 +14,4 @@ pub mod import;
     reason = "slated for a rewrite soon; not worth acting on yet"
 )]
 pub mod query;
+pub mod tui;

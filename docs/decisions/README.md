@@ -47,3 +47,6 @@ to be re-synced, it's meant to explain a choice that was made.
 - [0008](0008-role-name-uniqueness-key.md) - roles are deduped like people
   (case-fold key, diacritics preserved), not like tags; a role can only
   attach to a person already on the score, via a composite foreign key.
+- [0009](0009-grapheme-aware-text-buffer.md) - the command line buffer is a
+  `String` with a byte cursor pinned to grapheme boundaries; movement and
+  deletion work on clusters so emoji survive editing.

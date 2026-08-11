@@ -3,6 +3,8 @@ mod event;
 mod message;
 mod model;
 
+use tracing::info;
+
 use command::Command;
 use message::Message;
 use model::Model;
@@ -34,6 +36,10 @@ impl App {
     /// Also panics if the terminal cannot be set up, which mostly means the
     /// output isn't a terminal at all.
     pub async fn run(&mut self) {
+        // Logged before the terminal is taken over, so a failure to start is
+        // still recorded, and so each session is marked in the log.
+        info!("Starting the management interface");
+
         // Nothing is drawn yet, so the terminal is held only to keep raw mode
         // and the alternate screen active for as long as the loop runs. It
         // also installs a panic hook which restores the terminal first, so a

@@ -1,11 +1,14 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
-    style::{Color, Stylize},
-    widgets::{Block, BorderType, Paragraph, Widget},
+    style::Color,
+    widgets::{Block, BorderType, Paragraph, Wrap},
 };
 
 use crate::tui::{Command, Message};
+
+const NORMAL_COLOR: Color = Color::Reset;
+const SELECTION_COLOR: Color = Color::Green;
 
 /// Declares which of the two main panels is currently focused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -75,23 +78,28 @@ impl Model {
 
         let browser = Block::bordered()
             .border_type(BorderType::Rounded)
-            .style(match self.focus {
-                Focus::CommandLine => Color::Reset,
-                Focus::Browser => Color::Green,
+            .border_style(match self.focus {
+                Focus::CommandLine => NORMAL_COLOR,
+                Focus::Browser => SELECTION_COLOR,
             });
 
-        let command_line = Paragraph::new(self.input.as_str()).block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .style(match self.focus {
-                    Focus::CommandLine => Color::Green,
-                    Focus::Browser => Color::Reset,
-                })
-                .title("Search"),
-        );
+        let command_line = Paragraph::new(self.input.as_str())
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(match self.focus {
+                        Focus::CommandLine => SELECTION_COLOR,
+                        Focus::Browser => NORMAL_COLOR,
+                    })
+                    .title("Search"),
+            );
 
+        // `line_count` measures against the width available for text, which
+        // is narrower than the block's own width by one column of border on
+        // each side.
         let command_line_height_max = area.height / 2;
-        let command_line_height_desired = command_line.line_count(area.width);
+        let command_line_height_desired = command_line.line_count(area.width.saturating_sub(2));
         let command_line_height = u16::try_from(command_line_height_desired)
             .unwrap_or(u16::MAX)
             .min(command_line_height_max);

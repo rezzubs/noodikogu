@@ -47,6 +47,14 @@ impl App {
 
         let mut terminal = TerminalGuard::new().wrap_err("failed to initialize the terminal")?;
 
+        // Crossterm doesn't synthesize an initial resize event, so the
+        // model's terminal size has to be seeded directly here - before the
+        // first paint, so it's never stale even for an Up/Down keypress
+        // that arrives before any real resize happens.
+        self.model.terminal_size = terminal
+            .size()
+            .wrap_err("failed to read the terminal size")?;
+
         // Do an initial paint before any events come in.
         terminal
             .draw(|frame| self.model.view(frame))

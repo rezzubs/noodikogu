@@ -88,8 +88,8 @@ impl Drop for EventStream {
 fn map_event(model: &Model, event: &crossterm::event::Event) -> Option<Message> {
     match event {
         crossterm::event::Event::Key(key_event) => keymap::keymap(model, key_event),
+        crossterm::event::Event::Resize(width, height) => Some(Message::Resize(*width, *height)),
         crossterm::event::Event::Mouse(_)
-        | crossterm::event::Event::Resize(_, _)
         | crossterm::event::Event::Paste(_)
         | crossterm::event::Event::FocusGained
         | crossterm::event::Event::FocusLost => None,

@@ -26,4 +26,6 @@ pub enum Message {
     Quit,
     /// Ctrl+d on an empty command line will be used to exit.
     CommandLineEOF,
+    /// The terminal was resized to (width, height).
+    Resize(u16, u16),
 }

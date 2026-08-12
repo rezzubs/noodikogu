@@ -1738,6 +1738,8 @@ dependencies = [
  "tracing-subscriber",
  "turso",
  "unicode-normalization",
+ "unicode-segmentation",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

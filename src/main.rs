@@ -6,6 +6,7 @@
 mod debug_query;
 
 use clap::{Parser, Subcommand};
+use color_eyre::eyre::{Context, Result, eyre};
 use std::path::{Path, PathBuf};
 
 /// Noodikogu score catalogue CLI.
@@ -90,24 +91,26 @@ fn log_path() -> PathBuf {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
+    // Installed before anything else so it's in place for every panic and error
+    // from here on, including ones raised while the TUI has the terminal in
+    // raw mode.
+    color_eyre::install()?;
+
     let cli = Cli::parse();
 
-    // The management interface and the query debugger both take over the
-    // terminal, so their logs go to a file instead of landing on top of what
-    // they draw.
+    // The management interface takes over the terminal, so the logs go to a
+    // file instead of landing on top of what they draw.
     if matches!(cli.command, None | Some(Commands::DebugQuery)) {
         let path = log_path();
-        if let Err(e) = init_file_logging(&path) {
-            eprintln!("error: could not open log file {}: {e}", path.display());
-            std::process::exit(1);
-        }
+        init_file_logging(&path)
+            .wrap_err_with(|| format!("could not open log file {}", path.display()))?;
     } else {
         init_stderr_logging();
     }
 
     match cli.command {
-        None => noodikogu::tui::App::new().run().await,
+        None => noodikogu::tui::App::new().run().await?,
         Some(Commands::DebugQuery) => {
             if let Err(e) = debug_query::run() {
                 eprintln!("error: {e}");
@@ -117,27 +120,34 @@ async fn main() {
         Some(Commands::Import {
             csv_path,
             database_path,
-        }) => {
-            if let Err(e) = run_import_csv(&csv_path, &database_path).await {
-                eprintln!("error: {e}");
-                std::process::exit(1);
-            }
-        }
+        }) => run_import_csv(&csv_path, &database_path).await?,
     }
+
+    Ok(())
 }
 
 /// Reads `csv_path`, opens (creating it if necessary) the catalogue
 /// database at `database_path`, and imports every row.
-async fn run_import_csv(
-    csv_path: &Path,
-    database_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let text = tokio::fs::read_to_string(csv_path).await?;
-    let database_path = database_path
-        .to_str()
-        .ok_or("database path must be valid UTF-8")?;
-    let catalogue = noodikogu::catalogue::Catalogue::open(database_path).await?;
-    let imported = noodikogu::import::import_csv(&catalogue, &text).await?;
-    println!("imported {imported} score(s)");
+async fn run_import_csv(csv_path: &Path, database_path: &Path) -> Result<()> {
+    let text = tokio::fs::read_to_string(csv_path)
+        .await
+        .wrap_err_with(|| format!("failed to read CSV file at {}", csv_path.display()))?;
+
+    let database_path = database_path.to_str().ok_or_else(|| {
+        eyre!(
+            "database path must be valid UTF-8: {}",
+            database_path.display()
+        )
+    })?;
+
+    let catalogue = noodikogu::catalogue::Catalogue::open(database_path)
+        .await
+        .wrap_err_with(|| format!("failed to open catalogue database at {database_path}"))?;
+
+    let imported_count = noodikogu::import::import_csv(&catalogue, &text)
+        .await
+        .wrap_err_with(|| format!("failed to import scores from {}", csv_path.display()))?;
+
+    println!("imported {imported_count} score(s)");
     Ok(())
 }

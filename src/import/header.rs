@@ -29,10 +29,7 @@ pub enum HeaderError {
     )]
     UnknownFieldType { column: usize, header: String },
     #[error("column {column}: invalid tag name: {source}")]
-    InvalidTagName {
-        column: usize,
-        source: TagItemError,
-    },
+    InvalidTagName { column: usize, source: TagItemError },
     #[error("column {column}: invalid person role: {source}")]
     InvalidRoleName {
         column: usize,
@@ -109,7 +106,10 @@ mod tests {
         assert_eq!(header.column_count, 3);
         assert_eq!(header.primary_title_column, 0);
         assert_eq!(header.alternate_title_columns, Vec::<usize>::new());
-        assert_eq!(header.tag_columns, vec![(1, TagItem::parse("difficulty").unwrap())]);
+        assert_eq!(
+            header.tag_columns,
+            vec![(1, TagItem::parse("difficulty").unwrap())]
+        );
         assert_eq!(
             header.person_columns,
             vec![(2, Some("composer".parse().unwrap()))]

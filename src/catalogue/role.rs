@@ -453,7 +453,10 @@ mod tests {
 
         let conn = catalogue.connect().await.unwrap();
         let mut rows = conn
-            .query("SELECT name, name_key FROM roles WHERE id = ?", (role_id.0,))
+            .query(
+                "SELECT name, name_key FROM roles WHERE id = ?",
+                (role_id.0,),
+            )
             .await
             .unwrap();
         let row = rows.next().await.unwrap().unwrap();
@@ -467,7 +470,10 @@ mod tests {
         let first_id = catalogue.create_role(role_name("Composer")).await.unwrap();
 
         assert_eq!(
-            catalogue.create_role(role_name("COMPOSER")).await.unwrap_err(),
+            catalogue
+                .create_role(role_name("COMPOSER"))
+                .await
+                .unwrap_err(),
             CreateRoleError::AlreadyExists(first_id)
         );
     }
@@ -496,7 +502,10 @@ mod tests {
 
         let conn = catalogue.connect().await.unwrap();
         let mut rows = conn
-            .query("SELECT name, name_key FROM roles WHERE id = ?", (role_id.0,))
+            .query(
+                "SELECT name, name_key FROM roles WHERE id = ?",
+                (role_id.0,),
+            )
             .await
             .unwrap();
         let row = rows.next().await.unwrap().unwrap();

@@ -644,11 +644,14 @@ mod tests {
 
         let people = catalogue.score_people(score_id).await.unwrap();
 
-        assert_eq!(people, vec![PersonDetail {
-            id: person_id,
-            display_name: "Anna".to_string(),
-            roles: Vec::new(),
-        }]);
+        assert_eq!(
+            people,
+            vec![PersonDetail {
+                id: person_id,
+                display_name: "Anna".to_string(),
+                roles: Vec::new(),
+            }]
+        );
     }
 
     #[tokio::test]

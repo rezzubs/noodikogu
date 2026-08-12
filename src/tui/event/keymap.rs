@@ -2,12 +2,11 @@ use crate::tui::{
     message::Message,
     model::{Focus, Model},
 };
+use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::crossterm;
 
 /// Maps a crossterm key event to a message.
 pub fn keymap(model: &Model, event: &crossterm::event::KeyEvent) -> Option<Message> {
-    use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
-
     // Repeat and Release only arrive under the kitty keyboard protocol; other
     // terminals report a held key as ordinary repeated presses. A repeat is the
     // same activation happening again, so only releases are discarded.
@@ -65,31 +64,23 @@ fn browser(event: &crossterm::event::KeyEvent) -> Option<Message> {
 /// Vi-style movement is deliberately absent: the command line isn't modal, so
 /// those keys have to stay available as text.
 fn command_line(event: &crossterm::event::KeyEvent) -> Option<Message> {
-    use crossterm::event::{KeyCode, KeyModifiers};
-
-    match event.code {
+    match (event.code, event.modifiers) {
+        (KeyCode::Char('d'), KeyModifiers::CONTROL) => Some(Message::CommandLineEOF),
         // Shift accompanies uppercase characters, which are already cased
         // correctly in the code, so both count as literal input. Any other
         // modifier marks a command rather than text.
-        KeyCode::Char(character)
-            if matches!(event.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT) =>
-        {
+        (KeyCode::Char(character), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
             Some(Message::WriteCharacter(character))
         }
-        KeyCode::Backspace if event.modifiers == KeyModifiers::NONE => {
-            Some(Message::DeleteCharacterBefore)
-        }
-        KeyCode::Delete if event.modifiers == KeyModifiers::NONE => {
-            Some(Message::DeleteCharacterOn)
-        }
+
+        (KeyCode::Backspace, KeyModifiers::NONE) => Some(Message::DeleteCharacterBefore),
+        (KeyCode::Delete, KeyModifiers::NONE) => Some(Message::DeleteCharacterOn),
         _ => None,
     }
 }
 
 /// Bindings which apply when no more specific context shadows it.
 fn global(event: &crossterm::event::KeyEvent) -> Option<Message> {
-    use crossterm::event::{KeyCode, KeyModifiers};
-
     match event.modifiers {
         KeyModifiers::CONTROL => match event.code {
             KeyCode::Char('c') => Some(Message::Quit),

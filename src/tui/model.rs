@@ -1,3 +1,10 @@
+use ratatui::{
+    Frame,
+    layout::{Constraint, Layout},
+    style::{Color, Stylize},
+    widgets::{Block, BorderType, Paragraph, Widget},
+};
+
 use crate::tui::{Command, Message};
 
 /// Declares which of the two main panels is currently focused.
@@ -45,12 +52,55 @@ impl Model {
             Message::Up => {}
             Message::Down => {}
             Message::SwitchFocus => self.focus.switch(),
-            Message::WriteCharacter(_) => {}
-            Message::DeleteCharacterBefore => {}
+            Message::WriteCharacter(char) => {
+                self.input.push(*char);
+            }
+            Message::DeleteCharacterBefore => {
+                self.input.pop();
+            }
             Message::DeleteCharacterOn => {}
             Message::Quit => return Some(Command::Quit),
+            Message::CommandLineEOF => {
+                if self.input.is_empty() {
+                    return Some(Command::Quit);
+                }
+            }
         }
 
         None
+    }
+
+    pub fn view(&self, frame: &mut Frame) {
+        let area = frame.area();
+
+        let browser = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .style(match self.focus {
+                Focus::CommandLine => Color::Reset,
+                Focus::Browser => Color::Green,
+            });
+
+        let command_line = Paragraph::new(self.input.as_str()).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .style(match self.focus {
+                    Focus::CommandLine => Color::Green,
+                    Focus::Browser => Color::Reset,
+                })
+                .title("Search"),
+        );
+
+        let command_line_height_max = area.height / 2;
+        let command_line_height_desired = command_line.line_count(area.width);
+        let command_line_height = u16::try_from(command_line_height_desired)
+            .unwrap_or(u16::MAX)
+            .min(command_line_height_max);
+
+        let [browser_area, command_line_area] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(command_line_height)])
+                .areas(area);
+
+        frame.render_widget(browser, browser_area);
+        frame.render_widget(command_line, command_line_area);
     }
 }

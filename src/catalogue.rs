@@ -22,8 +22,8 @@ pub use role::{
     RenameRoleError, RoleName,
 };
 pub use score::{
-    DeleteScoreError, PersonDetail, RoleDetail, ScoreDetail, ScoreDetailError,
-    SetDescriptionError, TagDetail,
+    DeleteScoreError, PersonDetail, RoleDetail, ScoreDetail, ScoreDetailError, SetDescriptionError,
+    TagDetail,
 };
 pub use search::{Pagination, ScoreSummary};
 pub use tag::{AttachTagError, CreateTagError, DeleteTagError, DetachTagError};

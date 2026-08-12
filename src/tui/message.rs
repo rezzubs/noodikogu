@@ -24,4 +24,6 @@ pub enum Message {
     DeleteCharacterOn,
     /// A request to exit the application.
     Quit,
+    /// Ctrl+d on an empty command line will be used to exit.
+    CommandLineEOF,
 }

@@ -2,12 +2,15 @@ mod command;
 mod event;
 mod message;
 mod model;
+mod terminal;
 
+use color_eyre::eyre::{Context, Result};
 use tracing::info;
 
 use command::Command;
 use message::Message;
 use model::Model;
+use terminal::TerminalGuard;
 
 use crate::tui::event::EventStream;
 
@@ -33,18 +36,21 @@ impl App {
     /// same terminal and each would receive an arbitrary share of the input,
     /// so this is always a bug.
     ///
-    /// Also panics if the terminal cannot be set up, which mostly means the
-    /// output isn't a terminal at all.
-    pub async fn run(&mut self) {
+    /// # Errors
+    ///
+    /// Returns an error if the terminal cannot be set up (most likely
+    /// because stdout isn't a terminal at all), or if drawing to it fails.
+    pub async fn run(&mut self) -> Result<()> {
         // Logged before the terminal is taken over, so a failure to start is
         // still recorded, and so each session is marked in the log.
         info!("Starting the management interface");
 
-        // Nothing is drawn yet, so the terminal is held only to keep raw mode
-        // and the alternate screen active for as long as the loop runs. It
-        // also installs a panic hook which restores the terminal first, so a
-        // panic doesn't print into a screen still in raw mode.
-        let _terminal = ratatui::init();
+        let mut terminal = TerminalGuard::new().wrap_err("failed to initialize the terminal")?;
+
+        // Do an initial paint before any events come in.
+        terminal
+            .draw(|frame| self.model.view(frame))
+            .wrap_err("failed to draw to the terminal")?;
 
         let mut event_stream = EventStream::new();
 
@@ -56,8 +62,12 @@ impl App {
                     Command::Quit => break,
                 }
             }
+
+            terminal
+                .draw(|frame| self.model.view(frame))
+                .wrap_err("failed to draw to the terminal")?;
         }
 
-        ratatui::restore();
+        Ok(())
     }
 }

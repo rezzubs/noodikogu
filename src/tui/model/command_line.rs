@@ -204,24 +204,41 @@ pub struct View<'a> {
     pub cursor_position: Option<(u16, u16)>,
 }
 
-/// A visual (soft-wrapped) line: every byte of `content` it is responsible
-/// for.
-type VisualLine = Range<usize>;
+/// A visual (soft-wrapped) line: every byte of `content` it is responsible for,
+/// plus why it starts/ends where it does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VisualLine {
+    /// Every byte of `content` this line is responsible for.
+    range: Range<usize>,
+    /// This line's leading grapheme is whitespace that overflowed the
+    /// previous line and was absorbed here rather than being real content -
+    /// see the "word that exactly fills a line" case in [`wrap`]'s doc
+    /// comment. [`visible_range`] trims it from what actually renders.
+    leading_whitespace_absorbed: bool,
+    /// This line ends because the user typed an explicit newline, not
+    /// because of a wrap. [`visible_range`] trims the trailing newline
+    /// grapheme from what renders and the cursor-redirect logic in
+    /// [`cursor_display`]/[`resolve_cursor_line`] treats a cursor sitting right
+    /// after it as belonging to the start of the next line rather than "behind"
+    /// the invisible newline on this one.
+    ends_with_newline: bool,
+}
 
 /// Soft-wraps `content` to `width` terminal columns, breaking preferentially
-/// at whitespace and falling back to a hard break mid-word when a word (or
-/// a single grapheme) is wider than `width`.
+/// at whitespace and falling back to a hard break mid-word when a word (or a
+/// single grapheme) is wider than `width`. Also hard-breaks on every explicit
+/// newline the user typed, regardless of `width`.
 ///
 /// Whitespace is never trimmed or dropped - every byte of `content` ends up
 /// in exactly one returned [`VisualLine`]. [`VisualLine`] ranges are always
-/// contiguous: `result[0].start == 0`, `result[i].end == result[i + 1].start`
-/// and `result.last().end == content.len()`. This is what lets a caller map a
-/// cursor byte offset to a visual line unambiguously (see [`locate_line`]) and
-/// lets [`visible_range`] tell the first line apart from the rest by `start
-/// == 0`.
+/// contiguous: `result[0].range.start == 0`, `result[i].range.end == result[i
+/// \+ 1].range.start` and `result.last().range.end == content.len()`. This is
+/// what lets a caller map a cursor byte offset to a visual line unambiguously
+/// (see [`locate_line`]).
 ///
 /// Always returns at least one line - `0..0` for empty `content` - so you
-/// still get one row with nothing typed.
+/// still get one row with nothing typed. A trailing newline likewise always
+/// leaves one fresh, empty line after it, for the same reason.
 ///
 /// `width == 0` returns a single unwrapped line spanning all of `content`:
 /// there is no usable width to wrap against.
@@ -234,11 +251,11 @@ type VisualLine = Range<usize>;
 /// the full line.
 fn wrap(content: &str, width: u16) -> Vec<VisualLine> {
     if width == 0 {
-        #[allow(
-            clippy::single_range_in_vec_init,
-            reason = "this is a Vec<Range<usize>>, not a Vec<usize> that should be spelled as a range - clippy's own suggested fix produces the wrong type and trips vec_init_then_push in the other direction"
-        )]
-        return vec![0..content.len()];
+        return vec![VisualLine {
+            range: 0..content.len(),
+            leading_whitespace_absorbed: false,
+            ends_with_newline: false,
+        }];
     }
 
     let mut lines: Vec<VisualLine> = Vec::new();
@@ -249,6 +266,12 @@ fn wrap(content: &str, width: u16) -> Vec<VisualLine> {
     // A grapheme that becomes an invisible (leading space) is deliberately
     // never added (it will be trimmed by [`visible_range`]).
     let mut current_line_width: u16 = 0;
+
+    // Whether the line currently being built starts with an absorbed
+    // whitespace grapheme - carried from the moment that line starts
+    // (see the overflow handling below) to whenever it's finally pushed,
+    // and consumed into `VisualLine::leading_whitespace_absorbed` there.
+    let mut current_line_leading_whitespace_absorbed = false;
 
     // The most recent point since `line_start` where a word began right after
     // whitespace - a candidate place to break without splitting a word. Only
@@ -297,15 +320,27 @@ fn wrap(content: &str, width: u16) -> Vec<VisualLine> {
                 Some((break_byte, break_column))
                     if break_byte > current_line_start && !current_grapheme_is_space =>
                 {
-                    lines.push(current_line_start..break_byte);
+                    lines.push(VisualLine {
+                        range: current_line_start..break_byte,
+                        leading_whitespace_absorbed: current_line_leading_whitespace_absorbed,
+                        ends_with_newline: false,
+                    });
                     current_line_start = break_byte;
                     current_line_width -= break_column;
+                    // A word-boundary relocation always starts the new line
+                    // on the word itself, never on whitespace.
+                    current_line_leading_whitespace_absorbed = false;
                 }
                 _ => {
-                    lines.push(current_line_start..byte_offset);
+                    lines.push(VisualLine {
+                        range: current_line_start..byte_offset,
+                        leading_whitespace_absorbed: current_line_leading_whitespace_absorbed,
+                        ends_with_newline: false,
+                    });
                     current_line_start = byte_offset;
                     current_line_width = 0;
                     leading_space_absorbed = current_grapheme_is_space;
+                    current_line_leading_whitespace_absorbed = leading_space_absorbed;
                 }
             }
             break_at = None;
@@ -323,37 +358,60 @@ fn wrap(content: &str, width: u16) -> Vec<VisualLine> {
         if !leading_space_absorbed {
             current_line_width = current_line_width.saturating_add(grapheme_width);
         }
+
+        // An explicit newline always breaks the line right after itself,
+        // regardless of how much width is left - it can never itself trigger
+        // the overflow check above (its width is 0), so this has to be its own,
+        // unconditional check.
+        if grapheme.contains('\n') {
+            lines.push(VisualLine {
+                range: current_line_start..byte_offset + grapheme.len(),
+                leading_whitespace_absorbed: current_line_leading_whitespace_absorbed,
+                ends_with_newline: true,
+            });
+            current_line_start = byte_offset + grapheme.len();
+            current_line_width = 0;
+            current_line_leading_whitespace_absorbed = false;
+            break_at = None;
+        }
     }
 
-    lines.push(current_line_start..content.len());
+    lines.push(VisualLine {
+        range: current_line_start..content.len(),
+        leading_whitespace_absorbed: current_line_leading_whitespace_absorbed,
+        ends_with_newline: false,
+    });
     lines
 }
 
-/// The sub-range of `full` that actually renders and counts toward columns:
-/// `full` itself, minus a single leading whitespace grapheme when this isn't
-/// the first visual line and it starts with one.
-///
-/// That leading whitespace is the overflow trigger [`wrap`] hard-breaks on
-/// when a trailing space doesn't fit a line that's otherwise already full
-/// so rendering it as the first character of the next line would look like
-/// unwanted indentation.
-///
-/// A line can only start with whitespace this way: a genuine word-wrap
-/// break (`break_at`) always starts a line on a word, never on whitespace,
-/// so "does this non-first line start with whitespace" is a safe,
-/// sufficient signal.
-fn visible_range(content: &str, full: &VisualLine) -> VisualLine {
-    let is_first = full.start == 0;
-    let visible_start = if is_first {
-        full.start
-    } else {
-        content[full.clone()]
+/// The sub-range of `full.range` that actually renders and counts toward
+/// columns: `full.range` itself, minus a leading grapheme absorbed as
+/// overflow ([`VisualLine::leading_whitespace_absorbed`]) and/or a trailing
+/// newline grapheme ([`VisualLine::ends_with_newline`]).
+fn visible_range(content: &str, full: &VisualLine) -> Range<usize> {
+    let visible_start = if full.leading_whitespace_absorbed {
+        content[full.range.clone()]
             .grapheme_indices(true)
             .next()
-            .filter(|(_, grapheme)| grapheme.chars().all(char::is_whitespace))
-            .map_or(full.start, |(_, grapheme)| full.start + grapheme.len())
+            .map_or(full.range.start, |(_, grapheme)| {
+                full.range.start + grapheme.len()
+            })
+    } else {
+        full.range.start
     };
-    visible_start..full.end
+
+    let visible_end = if full.ends_with_newline {
+        content[full.range.clone()]
+            .grapheme_indices(true)
+            .next_back()
+            .map_or(full.range.end, |(relative_offset, _)| {
+                full.range.start + relative_offset
+            })
+    } else {
+        full.range.end
+    };
+
+    visible_start..visible_end
 }
 
 /// Finds which visual line contains `cursor`.
@@ -372,7 +430,7 @@ fn visible_range(content: &str, full: &VisualLine) -> VisualLine {
 fn locate_line(lines: &[VisualLine], cursor: usize) -> usize {
     lines
         .iter()
-        .position(|line| cursor <= line.end)
+        .position(|line| cursor <= line.range.end)
         .unwrap_or(lines.len().checked_sub(1).expect("empty lines"))
 }
 
@@ -381,9 +439,10 @@ fn locate_line(lines: &[VisualLine], cursor: usize) -> usize {
 ///
 /// `cursor` is assumed to be at or after the visible range's start, which
 /// [`locate_line`] guarantees: the only way to resolve to this line is to be
-/// past the wrap boundary that precedes it, and a leading whitespace grapheme
-/// (the only thing [`visible_range`] trims) is itself part of that boundary
-/// region.
+/// past the wrap boundary that precedes it, and a leading absorbed-whitespace
+/// grapheme is itself part of that boundary region. `cursor` may fall past
+/// the visible range's *end* though (inside a trimmed trailing newline) -
+/// harmless here since that grapheme is always 0-width.
 fn cursor_column(content: &str, line: &VisualLine, cursor: usize) -> u16 {
     let visible = visible_range(content, line);
     u16::try_from(content[visible.start..cursor].width()).unwrap_or(u16::MAX)
@@ -402,21 +461,18 @@ struct CursorDisplay {
 
 /// Computes where `cursor` should render within `lines`, and how many visual
 /// lines the box needs to show it there.
-fn cursor_display(
-    content: &str,
-    lines: &[VisualLine],
-    cursor: usize,
-    width: u16,
-) -> CursorDisplay {
+fn cursor_display(content: &str, lines: &[VisualLine], cursor: usize, width: u16) -> CursorDisplay {
     let line = locate_line(lines, cursor);
     let line_column = cursor_column(content, &lines[line], cursor);
 
-    if line_is_full(line_column, width) {
+    if redirects_to_next_line(&lines[line], line_column, cursor, width) {
         // No free cell after this line's last character to show the cursor -
-        // rendering it here would put it right on the box's border. Redirect
-        // to the start of whatever comes next: the real following line if the
-        // cursor isn't on the last one, or one fresh (empty) extra line, the
-        // same way the box already grows as typed text overflows, if it is.
+        // rendering it here would put it right on the box's border (or, for
+        // an explicit newline, right on top of the invisible newline
+        // character itself). Redirect to the start of whatever comes next:
+        // the real following line if the cursor isn't on the last one, or
+        // one fresh (empty) extra line, the same way the box already grows
+        // as typed text overflows, if it is.
         let next_line = line + 1;
         CursorDisplay {
             line: next_line,
@@ -445,17 +501,18 @@ fn line_is_full(line_column: u16, width: u16) -> bool {
     width > 0 && line_column >= width
 }
 
+/// Whether a cursor sitting at `cursor` on `line` should be treated as
+/// belonging to the start of the line after it instead.
+fn redirects_to_next_line(line: &VisualLine, line_column: u16, cursor: usize, width: u16) -> bool {
+    line_is_full(line_column, width) || (line.ends_with_newline && cursor == line.range.end)
+}
+
 /// The visual line and in-line column that line-to-line movement
 /// (`CommandLine::move_up`/`move_down`) should treat `cursor` as occupying.
 ///
-/// Mirrors [`cursor_display`]'s redirect: a cursor at the end of a
-/// completely full line (see [`line_is_full`]) renders at the start of the
-/// line that follows it, not at the full line's own border-sitting end
-/// column - so movement has to start from there too, or pressing Up/Down
-/// would move relative to a line the cursor doesn't actually look like it's
-/// on. Unlike `cursor_display`, this never redirects onto a phantom line
-/// past the end of `lines`: movement has nothing to move onto past the real
-/// last line, so there the plain [`locate_line`] result is already correct.
+/// Unlike `cursor_display`, this never redirects onto a phantom line past the
+/// end of `lines`: movement has nothing to move onto past the real last line,
+/// so there the plain [`locate_line`] result is already correct.
 fn resolve_cursor_line(
     content: &str,
     lines: &[VisualLine],
@@ -465,7 +522,7 @@ fn resolve_cursor_line(
     let line = locate_line(lines, cursor);
     let line_column = cursor_column(content, &lines[line], cursor);
 
-    if line_is_full(line_column, width) {
+    if redirects_to_next_line(&lines[line], line_column, cursor, width) {
         let next_line = line + 1;
         if next_line < lines.len() {
             return (next_line, 0);
@@ -487,12 +544,7 @@ fn resolve_cursor_line(
 /// achievable at all, and relaxes the margin gracefully at the true
 /// start/end of the buffer, where it can't be satisfied on both sides at
 /// once (see the tests below for the worked cases this relies on).
-fn scroll(
-    cursor_line: usize,
-    total_lines: usize,
-    inner_height: usize,
-    scrolloff: usize,
-) -> usize {
+fn scroll(cursor_line: usize, total_lines: usize, inner_height: usize, scrolloff: usize) -> usize {
     let effective_scrolloff = scrolloff.min(inner_height.saturating_sub(1) / 2);
     let max_scroll = total_lines.saturating_sub(inner_height);
     cursor_line
@@ -504,10 +556,10 @@ fn scroll(
 /// closest to `target_column` without exceeding it, landing on a grapheme
 /// boundary.
 ///
-/// The visible range's end (== `line.end`) is itself always a wrap/grapheme
-/// boundary (by construction of [`wrap`]), so falling through to it when
-/// `target_column` exceeds the line's own width still returns a valid
-/// boundary.
+/// The visible range's end is itself always a grapheme boundary so falling
+/// through to it when `target_column` exceeds the line's own width still
+/// returns a valid boundary - the closest available position before a trimmed
+/// trailing newline, never inside or past it.
 fn byte_offset_at_column(content: &str, line: &VisualLine, target_column: u16) -> usize {
     let visible = visible_range(content, line);
     let mut column_used = 0u16;
@@ -572,22 +624,26 @@ mod tests {
     use super::*;
 
     fn assert_contiguous(lines: &[VisualLine], content: &str) {
-        assert_eq!(lines[0].start, 0, "first line must start at 0");
+        assert_eq!(lines[0].range.start, 0, "first line must start at 0");
         assert_eq!(
-            lines.last().expect("wrap never returns an empty Vec").end,
+            lines
+                .last()
+                .expect("wrap never returns an empty Vec")
+                .range
+                .end,
             content.len(),
             "last line must end at content.len()"
         );
         for pair in lines.windows(2) {
             assert_eq!(
-                pair[0].end, pair[1].start,
+                pair[0].range.end, pair[1].range.start,
                 "lines must be contiguous, no gaps or overlaps"
             );
         }
     }
 
     fn full_text<'a>(content: &'a str, line: &VisualLine) -> &'a str {
-        &content[line.clone()]
+        &content[line.range.clone()]
     }
 
     fn visible_text<'a>(content: &'a str, line: &VisualLine) -> &'a str {
@@ -597,13 +653,15 @@ mod tests {
     #[test]
     fn empty_content_wraps_to_one_empty_line() {
         let lines = wrap("", 10);
-        assert_eq!(lines, vec![0..0]);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].range, 0..0);
     }
 
     #[test]
     fn width_zero_returns_one_unwrapped_line() {
         let lines = wrap("hello world", 0);
-        assert_eq!(lines, vec![0..11]);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].range, 0..11);
     }
 
     #[test]
@@ -719,11 +777,64 @@ mod tests {
     }
 
     #[test]
+    fn an_explicit_newline_forces_a_break_regardless_of_width() {
+        let content = "hi\nbye";
+        let lines = wrap(content, 80); // plenty of room, no soft-wrap involved
+        assert_contiguous(&lines, content);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(full_text(content, &lines[0]), "hi\n");
+        // The newline itself never renders - a literal `\n` inside a
+        // ratatui `Line` wouldn't start a new row on screen.
+        assert_eq!(visible_text(content, &lines[0]), "hi");
+        assert_eq!(full_text(content, &lines[1]), "bye");
+        assert_eq!(visible_text(content, &lines[1]), "bye");
+    }
+
+    #[test]
+    fn a_trailing_newline_leaves_a_fresh_empty_line_after_it() {
+        let content = "hi\n";
+        let lines = wrap(content, 80);
+        assert_contiguous(&lines, content);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(visible_text(content, &lines[0]), "hi");
+        assert_eq!(visible_text(content, &lines[1]), "");
+    }
+
+    #[test]
+    fn real_leading_whitespace_right_after_a_newline_is_not_trimmed() {
+        // Motivating bug this test guards against: before `VisualLine`
+        // tracked *why* a line starts with whitespace, `visible_range`
+        // guessed from "is this the first line" alone - a guess that was
+        // only safe because a genuine word-wrap break can never start a
+        // line on whitespace. An explicit newline breaks that assumption:
+        // the line right after it can start with a real, intentionally
+        // typed space, which must render, not get silently eaten like an
+        // absorbed word-wrap space would be.
+        let content = "hello\n world";
+        let lines = wrap(content, 80);
+        assert_contiguous(&lines, content);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(visible_text(content, &lines[0]), "hello");
+        assert_eq!(visible_text(content, &lines[1]), " world");
+    }
+
+    #[test]
+    fn consecutive_newlines_produce_a_blank_line_between_them() {
+        let content = "a\n\nb";
+        let lines = wrap(content, 80);
+        assert_contiguous(&lines, content);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(visible_text(content, &lines[0]), "a");
+        assert_eq!(visible_text(content, &lines[1]), "");
+        assert_eq!(visible_text(content, &lines[2]), "b");
+    }
+
+    #[test]
     fn locate_line_at_an_exact_boundary_picks_the_previous_line() {
         let content = "hello world";
         let lines = wrap(content, 5); // ["hello", " world"]
-        let boundary = lines[0].end;
-        assert_eq!(boundary, lines[1].start);
+        let boundary = lines[0].range.end;
+        assert_eq!(boundary, lines[1].range.start);
         // Locate line will put it at the end of the first line which is
         // correct in most cases. The only case where it doesn't make sense is
         // when the line is completely full. That case has special handling in
@@ -871,7 +982,7 @@ mod tests {
         let lines = wrap(content, width);
         let visible = visible_range(content, &lines[1]);
         assert_ne!(
-            lines[1], visible,
+            lines[1].range, visible,
             "sanity check: line 1 must actually have something trimmed"
         );
         assert_eq!(visible_text(content, &lines[1]), "test");
@@ -887,6 +998,26 @@ mod tests {
 
         buffer.move_down(width);
         assert_eq!(buffer.cursor(), visible.start);
+    }
+
+    #[test]
+    fn move_up_and_down_cross_a_typed_newline_like_any_other_line_boundary() {
+        let mut buffer = CommandLine::default();
+        for character in "hi\nbye".chars() {
+            buffer.insert_char(character);
+        }
+        let width = 80;
+
+        buffer.move_left();
+        buffer.move_left();
+        buffer.move_left();
+        assert_eq!(buffer.cursor(), 3, "sanity check: start of \"bye\"");
+
+        buffer.move_up(width);
+        assert_eq!(buffer.cursor(), 0, "column 0 of \"hi\"");
+
+        buffer.move_down(width);
+        assert_eq!(buffer.cursor(), 3, "back to the start of \"bye\"");
     }
 
     #[test]
@@ -1004,10 +1135,36 @@ mod tests {
         // line, not put it on the border at the end of "hello".
         let content = "hello ";
         let lines = wrap(content, 5);
-        let before_space = lines[0].end;
+        let before_space = lines[0].range.end;
         let display = cursor_display(content, &lines, before_space, 5);
         assert_eq!(display.line, 1);
         assert_eq!(display.column, 0);
+        assert_eq!(display.total_lines, 2);
+    }
+
+    #[test]
+    fn cursor_display_redirects_a_cursor_positioned_right_after_a_typed_newline() {
+        // "hi\n" fits width 80 with room to spare, so nothing here is
+        // column-full - the redirect has to fire purely because of the
+        // newline, mirroring the column-full case above but for a
+        // different reason.
+        let content = "hi\n";
+        let lines = wrap(content, 80);
+        let display = cursor_display(content, &lines, content.len(), 80);
+        assert_eq!(display.line, 1); // the fresh, empty line after the newline
+        assert_eq!(display.column, 0);
+        assert_eq!(display.total_lines, 2);
+    }
+
+    #[test]
+    fn cursor_display_does_not_redirect_a_cursor_positioned_right_before_a_typed_newline() {
+        // Byte 2 is right after "hi" but before the newline itself - typing
+        // here inserts onto line 0, not line 1, so it must render there.
+        let content = "hi\nbye";
+        let lines = wrap(content, 80);
+        let display = cursor_display(content, &lines, 2, 80);
+        assert_eq!(display.line, 0);
+        assert_eq!(display.column, 2);
         assert_eq!(display.total_lines, 2);
     }
 

@@ -72,6 +72,7 @@ fn command_line(event: &crossterm::event::KeyEvent) -> Option<Message> {
         (KeyCode::Char(character), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
             Some(Message::WriteCharacter(character))
         }
+        (KeyCode::Enter, KeyModifiers::NONE) => Some(Message::WriteCharacter('\n')),
 
         (KeyCode::Backspace, KeyModifiers::NONE) => Some(Message::DeleteCharacterBefore),
         (KeyCode::Delete, KeyModifiers::NONE) => Some(Message::DeleteCharacterOn),

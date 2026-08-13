@@ -4,8 +4,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Size},
     style::Color,
-    text::Line,
-    widgets::{Block, BorderType, Paragraph},
+    widgets::{Block, BorderType},
 };
 
 use crate::tui::{Command, Message};
@@ -107,21 +106,15 @@ impl Model {
                 Focus::Browser => SELECTION_COLOR,
             });
 
-        // Own the wrap computation instead of asking `Paragraph` to wrap
-        // raw text. Cursor placement and vertical movement both need to know
-        // exactly which bytes landed on which visual line, and `Paragraph`
-        // doesn't expose its wrap breakpoints anywhere they could be queried
-        // from outside it.
         let inner_width = command_line_inner_width(self.terminal_size);
-        let content = self.command_line.content();
-        let lines = command_line::wrap(content, inner_width);
-        let cursor =
-            command_line::cursor_display(content, &lines, self.command_line.cursor(), inner_width);
 
         let outer_height_max = area.height / 2;
         // sub 2 for top and bottom borders.
         let inner_height_max = usize::from(outer_height_max.saturating_sub(2));
-        let desired_inner_height = cursor.total_lines.min(inner_height_max);
+        let desired_inner_height = self
+            .command_line
+            .desired_height(inner_width)
+            .min(inner_height_max);
         let outer_height =
             u16::try_from(desired_inner_height.saturating_add(2)).unwrap_or(u16::MAX);
 
@@ -130,45 +123,17 @@ impl Model {
         let [browser_area, command_line_area] =
             Layout::vertical([Constraint::Fill(0), Constraint::Length(outer_height)]).areas(area);
 
-        // Re-derived from the actual post-layout area rather than reusing
-        // `desired_inner_height`: robust against `Layout` having had to
-        // shrink the request on an extreme terminal.
-        let inner_height = usize::from(command_line_area.height.saturating_sub(2));
-
-        let scroll = command_line::scroll(cursor.line, cursor.total_lines, inner_height, 2);
-
-        let command_line_text: Vec<Line> = lines
-            .iter()
-            .map(|line| Line::raw(&content[command_line::visible_range(content, line)]))
-            .collect();
-
-        let command_line_widget = Paragraph::new(command_line_text)
-            // No `.wrap()` call: every line here is already exactly as
-            // wide as `inner_width` allows, so this just selects the
-            // visible slice of our own pre-wrapped rows.
-            .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
-            .block(
-                Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(match self.focus {
-                        Focus::CommandLine => SELECTION_COLOR,
-                        Focus::Browser => NORMAL_COLOR,
-                    })
-                    .title("Search"),
-            );
+        let command_line_view = self.command_line.view(
+            inner_width,
+            command_line_area,
+            self.focus == Focus::CommandLine,
+        );
 
         frame.render_widget(browser, browser_area);
-        frame.render_widget(command_line_widget, command_line_area);
+        frame.render_widget(command_line_view.widget, command_line_area);
 
-        if self.focus == Focus::CommandLine && inner_height > 0 {
-            // Always < inner_height: `scroll` is constructed above so the
-            // cursor's line never falls outside the visible window.
-            let row_in_window =
-                u16::try_from(cursor.line.saturating_sub(scroll)).unwrap_or(u16::MAX);
-            frame.set_cursor_position((
-                command_line_area.x + 1 + cursor.column, // +1 = left border
-                command_line_area.y + 1 + row_in_window, // +1 = top border
-            ));
+        if let Some(cursor_position) = command_line_view.cursor_position {
+            frame.set_cursor_position(cursor_position);
         }
     }
 }

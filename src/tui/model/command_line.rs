@@ -3,8 +3,21 @@
 
 use std::ops::Range;
 
+use ratatui::{
+    layout::Rect,
+    style::Color,
+    text::Line,
+    widgets::{Block, BorderType, Paragraph},
+};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+
+const NORMAL_COLOR: Color = Color::Reset;
+const SELECTION_COLOR: Color = Color::Green;
+
+/// Rows of context kept between the cursor and the box's top/bottom edge
+/// while scrolling - see [`scroll`].
+const SCROLLOFF: usize = 2;
 
 /// A grapheme-aware text buffer with a cursor.
 // Fields are private so the invariant on `cursor` (see below) can only be
@@ -116,11 +129,84 @@ impl CommandLine {
         }
         self.cursor = byte_offset_at_column(&self.content, &lines[target_line], target_column);
     }
+
+    /// How many visual lines this content needs, at `width` columns, to show
+    /// its cursor.
+    ///
+    /// For a caller to decide how tall to make the box *before* laying it out.
+    /// At that point there's no [`Rect`] yet for [`Self::view`] to derive this
+    /// from, so it has to be asked for up front instead (see `Model::view`).
+    /// Recomputes the same [`wrap`]/[`cursor_display`] that `view` computes
+    /// again once the area is known - cheap enough for a command line's worth
+    /// of text that it's not worth threading the result through instead.
+    pub fn desired_height(&self, width: u16) -> usize {
+        let lines = wrap(&self.content, width);
+        cursor_display(&self.content, &lines, self.cursor, width).total_lines
+    }
+
+    /// Builds this command line's widget, and where its cursor should sit on
+    /// screen, for a box already laid out into `area` (border included) at
+    /// `width` content columns.
+    pub fn view(&self, width: u16, area: Rect, focused: bool) -> View<'_> {
+        // Re-derived from the actual, already-laid-out `area` rather than
+        // trusting a caller's earlier height request: robust against `Layout`
+        // having had to shrink that request on an extreme terminal.
+        let inner_height = usize::from(area.height.saturating_sub(2));
+
+        let line_boundaries = wrap(&self.content, width);
+        let cursor = cursor_display(&self.content, &line_boundaries, self.cursor, width);
+        let scroll_offset = scroll(cursor.line, cursor.total_lines, inner_height, SCROLLOFF);
+
+        let text: Vec<Line> = line_boundaries
+            .iter()
+            .map(|line| Line::raw(&self.content[visible_range(&self.content, line)]))
+            .collect();
+
+        let widget = Paragraph::new(text)
+            // No `.wrap()` call: every line here is already exactly as wide
+            // as `width` allows, so this just selects the visible slice of
+            // our own pre-wrapped rows.
+            .scroll((u16::try_from(scroll_offset).unwrap_or(u16::MAX), 0))
+            .block(
+                Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(if focused {
+                        SELECTION_COLOR
+                    } else {
+                        NORMAL_COLOR
+                    })
+                    .title("Search"),
+            );
+
+        let cursor_position = (focused && inner_height > 0).then(|| {
+            // Always < inner_height: `scroll` is constructed above so the
+            // cursor's line never falls outside the visible window.
+            let row_in_window =
+                u16::try_from(cursor.line.saturating_sub(scroll_offset)).unwrap_or(u16::MAX);
+            (
+                area.x + 1 + cursor.column, // +1 = left border
+                area.y + 1 + row_in_window, // +1 = top border
+            )
+        });
+
+        View {
+            widget,
+            cursor_position,
+        }
+    }
+}
+
+/// The rendered widget for a [`CommandLine`], and where its cursor should be
+/// shown on screen - `None` when it shouldn't be shown at all (unfocused, or
+/// the box has no visible rows).
+pub struct View<'a> {
+    pub widget: Paragraph<'a>,
+    pub cursor_position: Option<(u16, u16)>,
 }
 
 /// A visual (soft-wrapped) line: every byte of `content` it is responsible
 /// for.
-pub type VisualLine = Range<usize>;
+type VisualLine = Range<usize>;
 
 /// Soft-wraps `content` to `width` terminal columns, breaking preferentially
 /// at whitespace and falling back to a hard break mid-word when a word (or
@@ -146,7 +232,7 @@ pub type VisualLine = Range<usize>;
 /// width, so the space has nowhere to go but a new line. [`visible_range`] is
 /// then used to trim the leading whitespace for display so "world" appears as
 /// the full line.
-pub fn wrap(content: &str, width: u16) -> Vec<VisualLine> {
+fn wrap(content: &str, width: u16) -> Vec<VisualLine> {
     if width == 0 {
         #[allow(
             clippy::single_range_in_vec_init,
@@ -256,7 +342,7 @@ pub fn wrap(content: &str, width: u16) -> Vec<VisualLine> {
 /// break (`break_at`) always starts a line on a word, never on whitespace,
 /// so "does this non-first line start with whitespace" is a safe,
 /// sufficient signal.
-pub fn visible_range(content: &str, full: &VisualLine) -> VisualLine {
+fn visible_range(content: &str, full: &VisualLine) -> VisualLine {
     let is_first = full.start == 0;
     let visible_start = if is_first {
         full.start
@@ -283,7 +369,7 @@ pub fn visible_range(content: &str, full: &VisualLine) -> VisualLine {
 ///
 /// Panics if `lines` is empty. Call this with the output of [`wrap`], which
 /// never returns an empty `Vec`.
-pub fn locate_line(lines: &[VisualLine], cursor: usize) -> usize {
+fn locate_line(lines: &[VisualLine], cursor: usize) -> usize {
     lines
         .iter()
         .position(|line| cursor <= line.end)
@@ -298,7 +384,7 @@ pub fn locate_line(lines: &[VisualLine], cursor: usize) -> usize {
 /// past the wrap boundary that precedes it, and a leading whitespace grapheme
 /// (the only thing [`visible_range`] trims) is itself part of that boundary
 /// region.
-pub fn cursor_column(content: &str, line: &VisualLine, cursor: usize) -> u16 {
+fn cursor_column(content: &str, line: &VisualLine, cursor: usize) -> u16 {
     let visible = visible_range(content, line);
     u16::try_from(content[visible.start..cursor].width()).unwrap_or(u16::MAX)
 }
@@ -306,17 +392,17 @@ pub fn cursor_column(content: &str, line: &VisualLine, cursor: usize) -> u16 {
 /// Where to show the cursor, and how many visual lines the box needs in
 /// order to show it there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CursorDisplay {
-    pub line: usize,
-    pub column: u16,
+struct CursorDisplay {
+    line: usize,
+    column: u16,
     /// Usually `lines.len()`, except when a fresh line has to be counted
     /// for the cursor to land on - see [`line_is_full`].
-    pub total_lines: usize,
+    total_lines: usize,
 }
 
 /// Computes where `cursor` should render within `lines`, and how many visual
 /// lines the box needs to show it there.
-pub fn cursor_display(
+fn cursor_display(
     content: &str,
     lines: &[VisualLine],
     cursor: usize,
@@ -401,7 +487,7 @@ fn resolve_cursor_line(
 /// achievable at all, and relaxes the margin gracefully at the true
 /// start/end of the buffer, where it can't be satisfied on both sides at
 /// once (see the tests below for the worked cases this relies on).
-pub fn scroll(
+fn scroll(
     cursor_line: usize,
     total_lines: usize,
     inner_height: usize,

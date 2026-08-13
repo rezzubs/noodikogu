@@ -76,6 +76,36 @@ fn command_line(event: &crossterm::event::KeyEvent) -> Option<Message> {
 
         (KeyCode::Backspace, KeyModifiers::NONE) => Some(Message::DeleteCharacterBefore),
         (KeyCode::Delete, KeyModifiers::NONE) => Some(Message::DeleteCharacterOn),
+
+        // Readline/Emacs-style editing chords.
+        (KeyCode::Char('a'), KeyModifiers::CONTROL) | (KeyCode::Home, KeyModifiers::NONE) => {
+            Some(Message::MoveToLineStart)
+        }
+        (KeyCode::Char('e'), KeyModifiers::CONTROL) | (KeyCode::End, KeyModifiers::NONE) => {
+            Some(Message::MoveToLineEnd)
+        }
+        // Ctrl+Left/Alt+b (Meta+b) are both common encodings for "word
+        // left" - which one a terminal sends depends on its keyboard
+        // protocol, so both are bound to the same message.
+        (KeyCode::Char('b'), KeyModifiers::ALT) | (KeyCode::Left, KeyModifiers::CONTROL) => {
+            Some(Message::MoveWordLeft)
+        }
+        (KeyCode::Char('f'), KeyModifiers::ALT) | (KeyCode::Right, KeyModifiers::CONTROL) => {
+            Some(Message::MoveWordRight)
+        }
+        // Ctrl+Backspace is only reliably distinguishable from plain
+        // Backspace under a protocol like kitty's or xterm's
+        // `modifyOtherKeys` - terminals that can't disambiguate it just
+        // never send this arm, leaving Ctrl+w and Alt+Backspace (the
+        // classic, broadly-supported encoding) to still work.
+        (KeyCode::Char('w'), KeyModifiers::CONTROL)
+        | (KeyCode::Backspace, KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            Some(Message::DeleteWordBefore)
+        }
+        (KeyCode::Char('d'), KeyModifiers::ALT) => Some(Message::DeleteWordAfter),
+        (KeyCode::Char('k'), KeyModifiers::CONTROL) => Some(Message::DeleteToLineEnd),
+        (KeyCode::Char('u'), KeyModifiers::CONTROL) => Some(Message::DeleteToLineStart),
+
         _ => None,
     }
 }

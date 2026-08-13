@@ -98,6 +98,69 @@ impl CommandLine {
         self.cursor = next_grapheme_boundary(&self.content, self.cursor);
     }
 
+    /// Move the cursor to the start of the current logical line (the
+    /// nearest `'\n'` at or before it, or the start of the buffer).
+    ///
+    /// This is the typed line, delimited by real newlines - not the
+    /// soft-wrapped visual line rendering happens to break it into, which
+    /// [`wrap`]/[`VisualLine`] have no bearing on here.
+    pub fn move_to_line_start(&mut self) {
+        self.cursor = line_start(&self.content, self.cursor);
+    }
+
+    /// Symmetric with [`Self::move_to_line_start`].
+    pub fn move_to_line_end(&mut self) {
+        self.cursor = line_end(&self.content, self.cursor);
+    }
+
+    /// Move the cursor to the start of the previous word - the "unix word
+    /// rubout" notion of a word (any run of non-whitespace graphemes,
+    /// punctuation included), not Emacs's narrower alnum-only one.
+    pub fn move_word_left(&mut self) {
+        self.cursor = prev_word_boundary(&self.content, self.cursor);
+    }
+
+    /// Symmetric with [`Self::move_word_left`].
+    pub fn move_word_right(&mut self) {
+        self.cursor = next_word_boundary(&self.content, self.cursor);
+    }
+
+    /// Deletes from the start of the previous word (see
+    /// [`Self::move_word_left`]) up to the cursor.
+    pub fn delete_word_before(&mut self) {
+        let start = prev_word_boundary(&self.content, self.cursor);
+        self.content.drain(start..self.cursor);
+        // Same re-combination risk as `delete_before` - see `snap_forward`.
+        self.cursor = snap_forward(&self.content, start);
+    }
+
+    /// Deletes from the cursor up to the end of the next word (see
+    /// [`Self::move_word_right`]).
+    pub fn delete_word_after(&mut self) {
+        let end = next_word_boundary(&self.content, self.cursor);
+        self.content.drain(self.cursor..end);
+        self.cursor = snap_forward(&self.content, self.cursor);
+    }
+
+    /// Deletes from the start of the current logical line (see
+    /// [`Self::move_to_line_start`]) up to the cursor. Never crosses a
+    /// `'\n'`: a no-op right at the start of a line.
+    pub fn delete_to_line_start(&mut self) {
+        let start = line_start(&self.content, self.cursor);
+        self.content.drain(start..self.cursor);
+        self.cursor = snap_forward(&self.content, start);
+    }
+
+    /// Deletes from the cursor up to the end of the current logical line
+    /// (see [`Self::move_to_line_end`]). Never crosses a `'\n'`: a no-op
+    /// right at the end of a line - lines never merge as a side effect of
+    /// this.
+    pub fn delete_to_line_end(&mut self) {
+        let end = line_end(&self.content, self.cursor);
+        self.content.drain(self.cursor..end);
+        self.cursor = snap_forward(&self.content, self.cursor);
+    }
+
     /// Move the cursor to the closest matching column on the wrapped visual
     /// line above, given the current wrap `width`.
     ///
@@ -598,6 +661,69 @@ fn next_grapheme_boundary(content: &str, cursor: usize) -> usize {
         })
 }
 
+/// The byte offset right after the nearest `'\n'` at or before `cursor`, or
+/// `0` if there is none - the start of the current logical line.
+///
+/// `'\n'` is a single ASCII byte and always a grapheme-cluster boundary on
+/// its own, so a plain byte search is enough here; no grapheme-cluster
+/// scanning like [`prev_grapheme_boundary`] needs.
+fn line_start(content: &str, cursor: usize) -> usize {
+    content[..cursor].rfind('\n').map_or(0, |offset| offset + 1)
+}
+
+/// The byte offset of the nearest `'\n'` at or after `cursor`, or
+/// `content.len()` if there is none - the end of the current logical line.
+/// Symmetric with [`line_start`].
+fn line_end(content: &str, cursor: usize) -> usize {
+    content[cursor..]
+        .find('\n')
+        .map_or(content.len(), |relative_offset| cursor + relative_offset)
+}
+
+/// The byte offset of the start of the word immediately before `cursor` -
+/// any whitespace directly before `cursor` is skipped first, then the run of
+/// non-whitespace graphemes before that is skipped too, landing right after
+/// the whitespace that precedes it (or at `0`).
+fn prev_word_boundary(content: &str, cursor: usize) -> usize {
+    let before = &content[..cursor];
+
+    // Skip whitespace immediately before the cursor by finding the last
+    // non-whitespace grapheme and landing right after it.
+    let after_trailing_whitespace = before
+        .grapheme_indices(true)
+        .rev()
+        .find(|(_, grapheme)| !grapheme.chars().all(char::is_whitespace))
+        .map_or(0, |(start, grapheme)| start + grapheme.len());
+
+    // From there, walk back over the run of non-whitespace to find where it
+    // started, by finding the last whitespace grapheme before it.
+    content[..after_trailing_whitespace]
+        .grapheme_indices(true)
+        .rev()
+        .find(|(_, grapheme)| grapheme.chars().all(char::is_whitespace))
+        .map_or(0, |(start, grapheme)| start + grapheme.len())
+}
+
+/// The byte offset of the end of the word immediately after `cursor`.
+/// Symmetric with [`prev_word_boundary`].
+fn next_word_boundary(content: &str, cursor: usize) -> usize {
+    let after = &content[cursor..];
+
+    let after_leading_whitespace = after
+        .grapheme_indices(true)
+        .find(|(_, grapheme)| !grapheme.chars().all(char::is_whitespace))
+        .map_or(content.len(), |(relative_offset, _)| {
+            cursor + relative_offset
+        });
+
+    content[after_leading_whitespace..]
+        .grapheme_indices(true)
+        .find(|(_, grapheme)| grapheme.chars().all(char::is_whitespace))
+        .map_or(content.len(), |(relative_offset, _)| {
+            after_leading_whitespace + relative_offset
+        })
+}
+
 /// Snaps `offset` forward to the nearest actual grapheme boundary of
 /// `content`.
 ///
@@ -866,6 +992,143 @@ mod tests {
 
         buffer.delete_before(); // removes the whole cluster, not one codepoint
         assert_eq!(buffer.content(), "a");
+    }
+
+    #[test]
+    fn line_start_and_end_stay_within_the_current_logical_line() {
+        let content = "hello\nworld\nfoo";
+        // Mid "world" (the 'r'): must not cross either neighboring newline.
+        assert_eq!(line_start(content, 8), 6, "start of \"world\"");
+        assert_eq!(line_end(content, 8), 11, "the '\\n' right after \"world\"");
+    }
+
+    #[test]
+    fn line_start_and_end_are_a_no_op_already_sitting_on_the_boundary() {
+        let content = "hello\nworld\nfoo";
+        assert_eq!(line_start(content, 6), 6, "already at the start of a line");
+        assert_eq!(line_end(content, 11), 11, "already right before a '\\n'");
+    }
+
+    #[test]
+    fn line_start_and_end_at_the_buffer_edges() {
+        let content = "hello\nworld";
+        assert_eq!(line_start(content, 0), 0);
+        assert_eq!(line_end(content, content.len()), content.len());
+    }
+
+    #[test]
+    fn prev_word_boundary_skips_trailing_whitespace_then_the_word() {
+        let content = "foo  bar-baz qux";
+        // From the very end: "qux" is the word - punctuation-free case.
+        assert_eq!(prev_word_boundary(content, content.len()), 13);
+        // From right after "baz" (trailing space already gone): the
+        // hyphenated word is one unit, punctuation included - "unix word
+        // rubout", not Emacs's alnum-only word.
+        assert_eq!(prev_word_boundary(content, 13), 5);
+        // From right after "foo" (crossing the double space): lands on the
+        // very start of the buffer, since nothing precedes "foo".
+        assert_eq!(prev_word_boundary(content, 5), 0);
+    }
+
+    #[test]
+    fn prev_word_boundary_is_a_no_op_at_the_start_of_the_buffer() {
+        assert_eq!(prev_word_boundary("foo bar", 0), 0);
+    }
+
+    #[test]
+    fn next_word_boundary_skips_leading_whitespace_then_the_word() {
+        let content = "foo  bar-baz qux";
+        assert_eq!(next_word_boundary(content, 0), 3, "end of \"foo\"");
+        assert_eq!(
+            next_word_boundary(content, 3),
+            12,
+            "crossing the double space, end of the hyphenated word"
+        );
+    }
+
+    #[test]
+    fn next_word_boundary_is_a_no_op_at_the_end_of_the_buffer() {
+        let content = "foo bar";
+        assert_eq!(next_word_boundary(content, content.len()), content.len());
+    }
+
+    #[test]
+    fn word_boundaries_treat_a_typed_newline_as_whitespace() {
+        // No special-casing needed: '\n' is whitespace per `char::is_whitespace`,
+        // so it already separates words the same way a space does.
+        let content = "foo\nbar";
+        assert_eq!(next_word_boundary(content, 0), 3, "end of \"foo\"");
+        assert_eq!(prev_word_boundary(content, content.len()), 4, "start of \"bar\"");
+    }
+
+    #[test]
+    fn delete_word_before_removes_one_punctuation_inclusive_word() {
+        let mut buffer = CommandLine::default();
+        for character in "foo bar-baz".chars() {
+            buffer.insert_char(character);
+        }
+        buffer.delete_word_before();
+        assert_eq!(buffer.content(), "foo ");
+        assert_eq!(buffer.cursor(), 4);
+    }
+
+    #[test]
+    fn delete_word_after_removes_the_word_under_and_after_the_cursor() {
+        let mut buffer = CommandLine::default();
+        for character in "foo bar baz".chars() {
+            buffer.insert_char(character);
+        }
+        for _ in "bar baz".chars() {
+            buffer.move_left();
+        }
+        assert_eq!(buffer.cursor(), 4, "sanity check: right before \"bar\"");
+        buffer.delete_word_after();
+        assert_eq!(buffer.content(), "foo  baz");
+    }
+
+    #[test]
+    fn move_to_line_start_and_end_stay_within_a_typed_newline() {
+        let mut buffer = CommandLine::default();
+        for character in "hello\nworld".chars() {
+            buffer.insert_char(character);
+        }
+        buffer.move_to_line_start();
+        assert_eq!(buffer.cursor(), 6, "start of \"world\", not the whole buffer");
+
+        buffer.move_left();
+        buffer.move_to_line_end();
+        assert_eq!(buffer.cursor(), 5, "end of \"hello\", right before the '\\n'");
+    }
+
+    #[test]
+    fn delete_to_line_end_stops_before_a_typed_newline() {
+        let mut buffer = CommandLine::default();
+        for character in "hello\nworld".chars() {
+            buffer.insert_char(character);
+        }
+        buffer.move_to_line_start(); // start of "world"
+        buffer.move_right();
+        buffer.move_right(); // right after "wo"
+        buffer.delete_to_line_end();
+        assert_eq!(buffer.content(), "hello\nwo");
+
+        // Already at the end of a line: no-op, the newline is untouched.
+        buffer.delete_to_line_end();
+        assert_eq!(buffer.content(), "hello\nwo");
+    }
+
+    #[test]
+    fn delete_to_line_start_stops_before_a_typed_newline() {
+        let mut buffer = CommandLine::default();
+        for character in "hello\nworld".chars() {
+            buffer.insert_char(character);
+        }
+        buffer.delete_to_line_start(); // cursor is at the true end, in "world"
+        assert_eq!(buffer.content(), "hello\n");
+
+        // Already at the start of a line: no-op, the newline is untouched.
+        buffer.delete_to_line_start();
+        assert_eq!(buffer.content(), "hello\n");
     }
 
     #[test]

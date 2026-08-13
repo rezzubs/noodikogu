@@ -22,9 +22,27 @@ pub enum Message {
     DeleteCharacterBefore,
     /// Delete the character on the cursor,
     DeleteCharacterOn,
+    /// Move to the start of the current logical line.
+    MoveToLineStart,
+    /// Move to the end of the current logical line.
+    MoveToLineEnd,
+    /// Move to the start of the previous word.
+    MoveWordLeft,
+    /// Move to the end of the next word.
+    MoveWordRight,
+    /// Delete the word before the cursor.
+    DeleteWordBefore,
+    /// Delete the word after the cursor.
+    DeleteWordAfter,
+    /// Delete from the start of the current logical line up to the cursor.
+    DeleteToLineStart,
+    /// Delete from the cursor up to the end of the current logical line.
+    DeleteToLineEnd,
     /// A request to exit the application.
     Quit,
-    /// Ctrl+d on an empty command line will be used to exit.
+    /// Ctrl+d: forward-delete like the Delete key, or exit if the command
+    /// line is already empty (traditional EOF behavior) - the same dual
+    /// meaning Ctrl+d has in most shells.
     CommandLineEOF,
     /// The terminal was resized to (width, height).
     Resize(u16, u16),

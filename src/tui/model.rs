@@ -82,11 +82,25 @@ impl Model {
             Message::WriteCharacter(character) => self.command_line.insert_char(*character),
             Message::DeleteCharacterBefore => self.command_line.delete_before(),
             Message::DeleteCharacterOn => self.command_line.delete_on(),
+            // Unlike `Left`/`Right`/`Up`/`Down`, these are only ever emitted
+            // by `keymap::command_line`, which only runs while the command
+            // line is already focused - no runtime check needed, same as
+            // `WriteCharacter`/`DeleteCharacterBefore`/`DeleteCharacterOn`
+            // above.
+            Message::MoveToLineStart => self.command_line.move_to_line_start(),
+            Message::MoveToLineEnd => self.command_line.move_to_line_end(),
+            Message::MoveWordLeft => self.command_line.move_word_left(),
+            Message::MoveWordRight => self.command_line.move_word_right(),
+            Message::DeleteWordBefore => self.command_line.delete_word_before(),
+            Message::DeleteWordAfter => self.command_line.delete_word_after(),
+            Message::DeleteToLineStart => self.command_line.delete_to_line_start(),
+            Message::DeleteToLineEnd => self.command_line.delete_to_line_end(),
             Message::Quit => return Some(Command::Quit),
             Message::CommandLineEOF => {
                 if self.command_line.is_empty() {
                     return Some(Command::Quit);
                 }
+                self.command_line.delete_on();
             }
             Message::Resize(width, height) => {
                 self.terminal_size = Size::new(*width, *height);

@@ -33,7 +33,9 @@ impl Catalogue {
     ///
     /// The scores are ranked by how well each score's primary title matches the
     /// query's free-text `Title` portion, falling back to alphabetical order
-    /// (case/diacritic-insensitively, by primary title) as the tie-breaker.
+    /// (case/diacritic-insensitively, by primary title), then to the score's
+    /// id, as tie-breakers - the id keeps duplicate-titled scores in a
+    /// deterministic relative order across separate calls.
     ///
     /// # Errors
     ///
@@ -103,6 +105,10 @@ fn hydrate(
 
     select
         .order_by((Titles::Table, Titles::ValueNormalized), Order::Asc)
+        // Final tiebreaker: without it, two duplicate-titled scores have no
+        // guaranteed relative order between separate calls, even with zero
+        // concurrent writes.
+        .order_by((Titles::Table, Titles::ScoreId), Order::Asc)
         .limit(pagination.limit)
         .offset(pagination.offset)
         .take()
@@ -360,6 +366,23 @@ mod tests {
             titles_for(&catalogue, atom("Song")).await,
             vec!["Alpha Song", "Middle Song", "Zebra Song"]
         );
+    }
+
+    #[tokio::test]
+    async fn duplicate_titles_are_ordered_deterministically_by_score_id() {
+        let catalogue = seeded_catalogue(&[]).await;
+        let first = insert_score(&catalogue, "Same Title").await;
+        let second = insert_score(&catalogue, "Same Title").await;
+
+        let ids: Vec<ScoreId> = catalogue
+            .search(atom("Same Title"), full_page())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+
+        assert_eq!(ids, vec![ScoreId(first), ScoreId(second)]);
     }
 
     #[tokio::test]

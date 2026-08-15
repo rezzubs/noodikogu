@@ -16,6 +16,11 @@ struct Cli {
     /// Runs the management interface when no subcommand is given.
     #[command(subcommand)]
     command: Option<Commands>,
+    /// Path to the catalogue database to open. Only used when running the
+    /// management interface (no subcommand) - `import` takes its own
+    /// `--database` instead.
+    #[arg(long = "database", value_name = "PATH")]
+    database_path: Option<PathBuf>,
 }
 
 /// Available subcommands.
@@ -110,7 +115,23 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        None => noodikogu::tui::App::new().run().await?,
+        None => {
+            let database_path = cli.database_path.ok_or_else(|| {
+                eyre!("--database is required when launching the management interface")
+            })?;
+            let database_path = database_path.to_str().ok_or_else(|| {
+                eyre!(
+                    "database path must be valid UTF-8: {}",
+                    database_path.display()
+                )
+            })?;
+
+            noodikogu::tui::App::new(database_path)
+                .await
+                .wrap_err_with(|| format!("failed to open catalogue database at {database_path}"))?
+                .run()
+                .await?;
+        }
         Some(Commands::DebugQuery) => {
             if let Err(e) = debug_query::run() {
                 eprintln!("error: {e}");

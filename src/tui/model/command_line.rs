@@ -1058,7 +1058,11 @@ mod tests {
         // so it already separates words the same way a space does.
         let content = "foo\nbar";
         assert_eq!(next_word_boundary(content, 0), 3, "end of \"foo\"");
-        assert_eq!(prev_word_boundary(content, content.len()), 4, "start of \"bar\"");
+        assert_eq!(
+            prev_word_boundary(content, content.len()),
+            4,
+            "start of \"bar\""
+        );
     }
 
     #[test]
@@ -1093,11 +1097,19 @@ mod tests {
             buffer.insert_char(character);
         }
         buffer.move_to_line_start();
-        assert_eq!(buffer.cursor(), 6, "start of \"world\", not the whole buffer");
+        assert_eq!(
+            buffer.cursor(),
+            6,
+            "start of \"world\", not the whole buffer"
+        );
 
         buffer.move_left();
         buffer.move_to_line_end();
-        assert_eq!(buffer.cursor(), 5, "end of \"hello\", right before the '\\n'");
+        assert_eq!(
+            buffer.cursor(),
+            5,
+            "end of \"hello\", right before the '\\n'"
+        );
     }
 
     #[test]

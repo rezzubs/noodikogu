@@ -50,3 +50,7 @@ to be re-synced, it's meant to explain a choice that was made.
 - [0009](0009-grapheme-aware-text-buffer.md) - the command line buffer is a
   `String` with a byte cursor pinned to grapheme boundaries; movement and
   deletion work on clusters so emoji survive editing.
+- [0010](0010-search-result-staleness.md) - concurrent catalogue writes can
+  desync a search's tile cache (stale/undersized tiles, reordered rows);
+  the full fix (a trigger-maintained DB generation counter) is designed but
+  deferred, with only a narrow interim mitigation implemented now.

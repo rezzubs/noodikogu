@@ -14,16 +14,23 @@ the TUI.
 
 ## Layout
 
-Two panels:
+Two panels, though the Command line is only present when the active Browser
+context actually needs one:
 
-- **Command line** (bottom) - a single control surface for search queries,
-  free-text editing, and `/` commands. In addition to regular search, any text
-  editing the Browser delegates (a description, a title) is also done by the
-  command line.
-- **Browser** (top) - the display and navigation surface. Shows lists,
-  drills into detail, doesn't accept free text directly.
+- **Command line** (bottom, contextual) - a single control surface for search
+  queries, free-text editing, and `/` commands, owned by whichever Browser
+  context currently needs it (searching, filtering a sub-list, editing a
+  description/title, a locked-prefix sub-mode like "attach a person"). Not a
+  fixed global panel: a context with nothing to type (e.g. browsing an
+  already-loaded score's sections) has no Command line at all, and the
+  Browser takes the full screen. A context that owns a Command line owns its
+  query too - there's no separate, model-global "the current query"; each
+  context's Command line is the single source of truth for its own.
+- **Browser** (top, always present) - the display and navigation surface.
+  Shows lists, drills into detail, doesn't accept free text directly.
 
-`Tab` switches focus between them.
+`Tab` switches focus between the two when a Command line is present for the
+current context.
 
 ## Command line
 
@@ -38,20 +45,30 @@ Two panels:
   score, via the Browser's score-editing sub-view (see below). More commands get
   added as management actions surface that don't fit as a Browser action.
 
+### Live search
+
+Search results update as the query text changes, not on an explicit submit
+step - there's no "press Enter to search." `/` commands and confirming a
+locked-prefix sub-mode's selection are still distinct, deliberate actions;
+it's specifically the query grammar (no-prefix/`@@`/`##`) that's live. Exact
+interaction details (debouncing, what Enter does while a live search is
+focused) aren't settled yet.
+
 ### Contextual sub-modes
 
-Some Browser actions borrow the Command line rather than duplicating a search
-UI - e.g. "attach a person" from inside a score's People section reuses the
-people-query grammar. Rather than silently changing what plain text means,
-the Command line inserts the mode's prefix (`@@` or `##`) as a locked, dimmed
-segment at the start of the line: visible so the mode is never ambiguous,
-immutable so the user can't accidentally delete it. Backspace at the start
-of the editable region stops at that boundary instead of eating into it. The
-Command line's title (see Browser breadcrumbs below) also reflects the active
-mode, e.g. "Attach person" vs. "Search".
+Some Browser actions enter a sub-context with its own Command line rather
+than duplicating a search UI - e.g. "attach a person" from inside a score's
+People section opens a context whose Command line uses the people-query
+grammar. Rather than silently changing what plain text means, that Command
+line inserts the mode's prefix (`@@` or `##`) as a locked, dimmed segment at
+the start of the line: visible so the mode is never ambiguous, immutable so
+the user can't accidentally delete it. Backspace at the start of the editable
+region stops at that boundary instead of eating into it. The Command line's
+title (see Browser breadcrumbs below) also reflects the active mode, e.g.
+"Attach person" vs. "Search".
 
-Text editing actions like updating the description of a score will also use the
-command line.
+Text editing actions like updating the description of a score will also use a
+context-owned command line.
 
 ### Sizing
 
@@ -141,13 +158,29 @@ is remembered until another tree is entered).
 
 ### Fetching
 
-A level backed by a query only fetches as many results as fit the current
-screen; scrolling past the fetched page fetches the next one. The buffers for
-next/previous screens should also be kept in memory. The Browser's title area
-shows pagination info on the right. Resizing the terminal re-fetches to match
-the new page size. Selection is tracked by item identity, not row index or page
-number: re-entering a level you navigated out of, or resizing mid-view, restores
-the same item as selected rather than resetting to the top.
+Scrolling through a level backed by a query is smooth and scrolloff-style,
+one row at a time - not page-jump. Results are fetched in fixed-size chunks
+("tiles") in the background, deliberately decoupled from the terminal's
+current size: a tile's size never changes across a resize, so a resize never
+leaves already-fetched tiles at a stale size or needs to know the terminal's
+dimensions just to decide how big a fetch should be. Enough tiles are kept
+buffered around the current selection to always cover at least the visible
+area, plus a small lookahead margin so scrolling doesn't need a fetch on
+every single keypress - "enough" scales with the terminal's actual height
+(a maximized window on a large display needs more buffered tiles than a
+typical terminal, not a fixed amount), and tiles far enough from the
+selection get dropped again to bound memory use. Fetches run
+asynchronously; nothing blocks input while one is in flight.
+
+A reliable "row X of Y" position/total-count display isn't part of this
+design - the result count is inherently unstable in a live-editable
+catalogue, so there's no cheap way to keep such a display accurate, and it's
+been dropped as a goal rather than left as a TODO.
+
+Resizing mid-view keeps the same row selected rather than resetting to the
+top or jumping. Restoring the same item when re-entering a level you
+previously navigated out of is still an open question - session/navigation
+history across levels isn't designed yet.
 
 ## Cross-cutting concerns
 
